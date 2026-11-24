@@ -7,3 +7,5 @@ The standard-library harness uses line-delimited JSON pipes, an integer virtual 
 The A authority, A application and B actors provide process and authenticated round-trip scaffolding in this step. The later exchange, controls, restore and rejection fixtures are declarations with UNVERIFIED results. Separate process directories model ownership and do not prove operational isolation or independent custody.
 
 Verdicts: PASS exits 0, FAIL exits 1, and incomplete evidence without a scored failure exits 2. Read the artifact's smoke receipt, manifests, case receipts, and summary for the tested revision.
+
+Step 4 runs after smoke and the Step 3 regression suite. Its synthetic operator actors exercise local enrollment and locator bootstrap, publication verification, service authorization, endpoint revision and exit. TLS failure and HTTP transport states are modeled, with no sockets or TLS handshakes. The unrelated control fixture uses a separate logical peer hosted by the access actor to stay within the process bound. Step 5 and Step 6 are unexecuted.

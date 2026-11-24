@@ -3,13 +3,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - step-3-cloud-simulation
+      - step-4-bilateral-exchange
     paths:
       - .github/workflows/cloud-simulation.yml
 permissions:
   contents: read
 jobs:
-  step-3:
+  step-4:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -36,6 +36,10 @@ jobs:
         run: |
           export CHECKOUT_SHA="$(git rev-parse HEAD)"
           python3 -m commonwealth_sim run --topology simulation/fixtures/topology.json --cases simulation/fixtures/cases.json --suite step-3 --out "$RUNNER_TEMP/commonwealth/step-3"
+      - name: Run Step 4
+        run: |
+          export CHECKOUT_SHA="$(git rev-parse HEAD)"
+          python3 -m commonwealth_sim run --topology simulation/fixtures/topology.json --cases simulation/fixtures/cases.json --suite step-4 --out "$RUNNER_TEMP/commonwealth/step-4"
       - name: Expose bounded synthetic acceptance receipts
         if: always()
         run: |
@@ -49,6 +53,10 @@ jobs:
               "step-3/execution-manifest.json", "step-3/summary.json",
               "step-3/access.json", "step-3/dns.json",
               "step-3/isolation.json", "step-3/withdrawal.json",
+          )
+          names += tuple(
+              str(path.relative_to(root))
+              for path in sorted((root / "step-4").glob("*.json"))
           )
           for name in names:
               path = root / name
@@ -67,7 +75,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: commonwealth-step-3
+          name: commonwealth-step-4
           path: ${{ runner.temp }}/commonwealth
           if-no-files-found: error
           retention-days: 14

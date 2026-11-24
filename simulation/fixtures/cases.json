@@ -441,5 +441,1601 @@
     "step-6-unauthorized-rejoin": {
       "expected": "Reject rejoin; endpoint, revision, binding digest, trust and policy remain unchanged"
     }
+  },
+  "step-4": {
+    "first_exchange": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "bad_publication"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "authority_denied",
+            "binding": null,
+            "floor": null
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent",
+            "cache_empty": true
+          },
+          "discovery": {
+            "decision": "accepted",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 5,
+              "expires": 10
+            },
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-1"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.write"
+        },
+        "expect": {
+          "call": {
+            "decision": "destination_denied",
+            "endpoint": "a-host-1",
+            "protected_payload": false
+          },
+          "reply": {
+            "decision": "destination_denied",
+            "endpoint": "a-host-1",
+            "protected_payload": false
+          }
+        }
+      }
+    ],
+    "moved_endpoint": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted"
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-1"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "move"
+        },
+        "expect": {
+          "move": {
+            "decision": "published",
+            "revision": 2,
+            "endpoint": "a-host-2"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-2"
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-2",
+              "endpoint_key": "fixture:a-host-2",
+              "epoch": 1,
+              "revision": 2,
+              "issued": 7,
+              "expires": 12
+            },
+            "floor": {
+              "revision": 2,
+              "content": [
+                "a.records",
+                "a-host-2",
+                "fixture:a-host-2"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 8,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-2"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-2"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-2"
+          }
+        }
+      },
+      {
+        "tick": 9,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "conflict"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "conflict",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-2",
+              "endpoint_key": "fixture:a-host-2",
+              "epoch": 1,
+              "revision": 2,
+              "issued": 7,
+              "expires": 12
+            },
+            "floor": {
+              "revision": 2,
+              "content": [
+                "a.records",
+                "a-host-2",
+                "fixture:a-host-2"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "stale"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "stale",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-2",
+              "endpoint_key": "fixture:a-host-2",
+              "epoch": 1,
+              "revision": 2,
+              "issued": 7,
+              "expires": 12
+            },
+            "floor": {
+              "revision": 2,
+              "content": [
+                "a.records",
+                "a-host-2",
+                "fixture:a-host-2"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 11,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-2"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-2"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-2"
+          }
+        }
+      }
+    ],
+    "peer_exit": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted"
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-1"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "control"
+        },
+        "expect": {
+          "control": {
+            "decision": "control_sent"
+          },
+          "control_call": {
+            "decision": "control_served"
+          },
+          "control_reply": {
+            "decision": "control_received",
+            "result": "healthy"
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "exit"
+        },
+        "expect": {
+          "exit": {
+            "decision": "local_exit",
+            "binding": null,
+            "session": false,
+            "notice": "unavailable"
+          }
+        }
+      },
+      {
+        "tick": 8,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 9,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "no_usable_binding",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "control"
+        },
+        "expect": {
+          "control": {
+            "decision": "control_sent"
+          },
+          "control_call": {
+            "decision": "control_served"
+          },
+          "control_reply": {
+            "decision": "control_received",
+            "result": "healthy"
+          }
+        }
+      }
+    ],
+    "unknown_service": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted"
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.unknown",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "unknown_service",
+            "binding": null,
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "unavailable": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "unavailable"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "authenticated_unavailable",
+            "binding": null,
+            "floor": null
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 5,
+              "expires": 10
+            }
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "unavailable"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "authenticated_unavailable",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 5,
+              "expires": 10
+            },
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            },
+            "floor_before": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-1"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "unavailable"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "authenticated_unavailable",
+            "binding": null,
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 11,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "no_usable_binding",
+            "binding": null
+          }
+        }
+      }
+    ],
+    "timeout": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "timeout"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "timeout",
+            "binding": null,
+            "floor": null
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 5,
+              "expires": 10
+            }
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "timeout"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "timeout",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 5,
+              "expires": 10
+            },
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            },
+            "floor_before": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-1"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "timeout"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "timeout",
+            "binding": null,
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 11,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "no_usable_binding",
+            "binding": null
+          }
+        }
+      }
+    ],
+    "tls_failure": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "tls_failure"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "tls_failure",
+            "binding": null,
+            "floor": null
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 5,
+              "expires": 10
+            }
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "tls_failure"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "tls_failure",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 5,
+              "expires": 10
+            },
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            },
+            "floor_before": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "request_sent",
+            "endpoint": "a-host-1"
+          },
+          "call": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          },
+          "reply": {
+            "decision": "allowed",
+            "record-01": "commonwealth-fixture-v1",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "tls_failure"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "tls_failure",
+            "binding": null,
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "tick": 11,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "no_usable_binding",
+            "binding": null
+          }
+        }
+      }
+    ],
+    "expiry": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "wrong"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "fingerprint_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records"
+        },
+        "expect": {
+          "discover": {
+            "decision": "peer_unenrolled"
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "op-a",
+        "input": {
+          "op": "enroll",
+          "peer": "op-b",
+          "fingerprint": "fixture-fingerprint-B"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-b"
+          },
+          "serve": {
+            "decision": "serving",
+            "endpoint": "a-host-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll",
+          "peer": "op-a",
+          "locator": "fixture",
+          "fingerprint": "fixture-fingerprint-A"
+        },
+        "expect": {
+          "enroll": {
+            "decision": "enrolled",
+            "peer": "op-a",
+            "binding": null
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "none"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "accepted"
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "discover",
+          "service": "a.records",
+          "fault": "expired"
+        },
+        "expect": {
+          "discover": {
+            "decision": "lookup_sent"
+          },
+          "discovery": {
+            "decision": "expired",
+            "binding": {
+              "service": "a.records",
+              "publisher": "a-publisher",
+              "endpoint": "a-host-1",
+              "endpoint_key": "fixture:a-host-1",
+              "epoch": 1,
+              "revision": 1,
+              "issued": 4,
+              "expires": 9
+            }
+          }
+        }
+      },
+      {
+        "tick": 9,
+        "actor": "b",
+        "sender": "op-b",
+        "input": {
+          "op": "request",
+          "action": "record.read"
+        },
+        "expect": {
+          "request": {
+            "decision": "no_usable_binding",
+            "binding": null,
+            "floor": {
+              "revision": 1,
+              "content": [
+                "a.records",
+                "a-host-1",
+                "fixture:a-host-1"
+              ]
+            }
+          }
+        }
+      }
+    ]
   }
 }

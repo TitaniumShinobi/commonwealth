@@ -119,6 +119,8 @@ class Actor:
         self.accepted = {}
         self.sequence = {}
         self.closed_tick = -1
+        from .federation import Federation
+        self.federation = Federation(role, directory, topology)
         self.access = Access(topology["access"]) if role == "access" else None
 
     def receive(self, envelope, signature):
@@ -139,13 +141,15 @@ class Actor:
             return {"decision": "stale_rejected"}
         permitted = (sender, purpose) == ("harness", "smoke") or (
             self.role == "access" and (sender, purpose) == ("access-operator", "access"))
-        if not permitted:
+        if not permitted and purpose != "federation":
             return {"decision": "authority_rejected"}
         self.accepted[identity] = digest
         self.sequence[sender] = envelope["sequence"]
         if purpose == "smoke":
             return {"decision": "accepted", "role": self.role,
                     "state_directory": str(self.directory), "limits": list(resource.getrlimit(resource.RLIMIT_AS))}
+        if purpose == "federation":
+            return {"decision": "accepted", **self.federation.apply(sender, tick, envelope["payload"])}
         return {"decision": "accepted", "observation": self.access.apply(tick, envelope["payload"])}
 
     def dispatch(self, request):

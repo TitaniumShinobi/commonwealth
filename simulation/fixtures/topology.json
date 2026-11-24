@@ -8,16 +8,23 @@
     },
     "op-a": {
       "peer": "public-a-peer",
-      "backup": "public-a-backup"
+      "backup": "public-a-backup",
+      "federation": "public-op-a-federation",
+      "operator": "public-a-operator",
+      "publication": "public-a-publication"
     },
     "op-b": {
-      "peer": "public-b-peer"
+      "peer": "public-b-peer",
+      "federation": "public-op-b-federation"
     },
     "a-steward": {
       "restore": "public-a-steward-restore"
     },
     "a-authority": {
       "publication": "public-a-authority-publication"
+    },
+    "control-peer": {
+      "federation": "public-control-peer-federation"
     }
   },
   "access": {
@@ -54,5 +61,17 @@
     "record_id": "record-01",
     "value": "commonwealth-fixture-v1",
     "revoked_credential": "b-revoked-01"
+  },
+  "federation": {
+    "fingerprints": {
+      "op-a": "fixture-fingerprint-A",
+      "op-b": "fixture-fingerprint-B"
+    },
+    "locator": {
+      "operator": "op-a",
+      "url": "https://discovery.a.test",
+      "pin": "fixture-discovery-A",
+      "revision": 1
+    }
   }
 }

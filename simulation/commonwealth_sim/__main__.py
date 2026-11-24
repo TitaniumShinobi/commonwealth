@@ -158,6 +158,9 @@ class Case:
             if due < tick or deliveries > 256:
                 raise ValueError("delivery tick or bound violated")
             result = self.call(request["envelope"]["recipient"], request)
+            for emitted in result.get("emit", []):
+                heapq.heappush(pending, self.envelope(tick, emitted["recipient"], emitted["sender"],
+                                                     "federation", emitted["payload"]))
             yield result
         for role in ROLES:
             if self.call(role, {"kind": "close_tick", "tick": tick}) != {"closed": tick}:
@@ -188,6 +191,34 @@ class Case:
                                      "expected": action["expected"], "observed": actual,
                                      "matches": reply.get("decision") == "accepted" and actual == action["expected"]})
 
+    def run_federation(self, steps):
+        next_tick = 0
+        for step in steps:
+            tick = step["tick"]
+            for idle in range(next_tick, tick):
+                list(self.advance(idle, []))
+            payload = dict(step["input"])
+            if payload.get("locator") == "fixture":
+                descriptor = self.topology["federation"]["locator"]
+                signature = tag(self.topology["keys"]["op-a"]["operator"], descriptor)
+                payload["locator"] = {"data": descriptor, "tag": signature}
+            pending = [self.envelope(tick, step["actor"], step["sender"], "federation", payload)]
+            start = len(self.trace)
+            list(self.advance(tick, pending))
+            seen = {}
+            for entry in self.trace[start:]:
+                request = entry["request"]
+                if request["kind"] == "deliver":
+                    operation = request["envelope"]["payload"]["op"]
+                    seen[operation] = entry["reply"].get("observation", entry["reply"])
+            for operation, expected in step["expect"].items():
+                actual = seen.get(operation)
+                matches = actual is not None and all(actual.get(k) == v and k in actual
+                                                     for k, v in expected.items())
+                self.results.append({"criterion": operation, "tick": tick,
+                                     "expected": expected, "observed": actual, "matches": matches})
+            next_tick = tick + 1
+
     def stop(self, abort):
         for child in self.children.values():
             child.finish(abort)
@@ -195,7 +226,7 @@ class Case:
         return [child.reap(deadline) for child in self.children.values()]
 
 
-def execute(topology, path, run, fixture, suite_deadline, action=None):
+def execute(topology, path, run, fixture, suite_deadline, action=None, suite='step-3'):
     case = Case(topology, path, run, fixture, min(suite_deadline, time.monotonic() + 30))
     error = None
     with tempfile.TemporaryDirectory(prefix="cw-sim-", dir=os.environ["RUNNER_TEMP"]) as directory:
@@ -203,6 +234,8 @@ def execute(topology, path, run, fixture, suite_deadline, action=None):
             case.start(Path(directory))
             if action is None:
                 case.smoke(Path(directory))
+            elif suite == 'step-4':
+                case.run_federation(action)
             else:
                 case.run_fixture(action)
         except (OSError, RuntimeError, TimeoutError, ValueError, KeyError) as exc:
@@ -211,7 +244,7 @@ def execute(topology, path, run, fixture, suite_deadline, action=None):
             diagnostics = case.stop(error is not None)
     observed_failure = any(not result["matches"] for result in case.results)
     verdict = "FAIL" if observed_failure else "UNVERIFIED" if error else "PASS"
-    return {"case": fixture, "suite": "smoke" if action is None else "step-3",
+    return {"case": fixture, "suite": "smoke" if action is None else suite,
             "run": run, "revision": os.getenv("CHECKOUT_SHA"), "topology_sha256": digest(path),
             "initial_state": "fresh process directories and case-local logical state",
             "authorities": {"orchestration": "harness", "access": "access-operator"},
@@ -224,7 +257,7 @@ def main():
     parser.add_argument("command", choices=("smoke", "run"))
     parser.add_argument("--topology", type=Path, required=True)
     parser.add_argument("--cases", type=Path)
-    parser.add_argument("--suite", choices=("step-3",))
+    parser.add_argument("--suite", choices=("step-3", "step-4"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     revision = os.getenv("CHECKOUT_SHA")
@@ -268,15 +301,16 @@ def main():
                 raise ValueError("same-run smoke PASS required")
             cases = decode(args.cases.read_bytes())
             results = {}
-            for name, actions in cases["step-3"].items():
-                receipt = execute(topology, args.topology, run, name, deadline, actions)
+            for name, actions in cases[args.suite].items():
+                receipt = execute(topology, args.topology, run, name, deadline, actions, args.suite)
                 receipt["cases_sha256"] = manifest["cases_sha256"]
                 results[name] = receipt["verdict"]
                 save(directory / f"{name}.json", receipt)
             verdict = ("FAIL" if "FAIL" in results.values() else
                        "UNVERIFIED" if not results or "UNVERIFIED" in results.values() else "PASS")
             save(directory / "summary.json", {"verdict": verdict, "cases": results,
-                 "later_cases": {name: "UNVERIFIED" for name in cases["later"]}, "revision": revision})
+                 "later_cases": {name: "UNVERIFIED" for name in cases["later"]
+                                 if args.suite != "step-4" or not name.startswith("step-4-")}, "revision": revision})
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         target = args.out if args.command == "smoke" else directory / "summary.json"
         verdict = "FAIL" if "FAIL" in locals().get("results", {}).values() else "UNVERIFIED"
