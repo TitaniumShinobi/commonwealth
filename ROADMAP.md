@@ -48,10 +48,17 @@
    - LIFE operates the reference node, service, sandbox and release channels in the proposed operating model. Disclose LIFE as a reference peer and require local acceptance at enrollment.
    - Offer Connect to a service, Run a node and Connect a lab. Verify the entire software setup path on a clean supported environment.
 
+**After Step 8 · University of Advancing Technology faculty walkthrough.**
+- Once the signed Commonwealth Kit reproduces the Steps 3–6 exchange and recovery, request a 30-minute meeting with a Network Engineering or Network Security faculty member.
+- Show the guided setup, two independently administered nodes, one authorized service exchange, one out-of-scope denial, and the clean-host restore receipt. Show B recognizing the restored service under its existing policy while B’s own workload continues. Label the demonstration as classical federation.
+- Ask whether the exercise is teachable and independently reproducible, and which supervised academic route fits. Outreach requires separate authorization.
+
 9. **Finish guides, official plugins and independent setup.** [PLUG AND PLAY]
    - Provide guided clicks, equivalent how-to commands and optional official plugins for supported AI hosts. Cover installation, first exchange, common failures, upgrades, exit and restore.
    - Keep secrets and privileged controls under local authority. Demonstrate a rejected unauthorized plugin change, unchanged target state and no credential disclosure.
    - Use the local counterpart during a LIFE sandbox outage. A separate operator builds and publishes a compatible extension, then proves interoperability and unsupported-version handling with an independent peer.
+   - **UAT supervised replication.** Ask for one faculty sponsor and one supervised student team. LIFE supplies the signed kit, guide, reference peer, test fixture, receipt template and support contact. The team installs the kit in a UAT-approved environment, controls its own node, keys and local policy, and reproduces one allowed exchange, one denial, and rejoin after LIFE restores its service.
+   - **UAT receipt.** Record the observed results, where LIFE assistance was required, and specific documentation gaps. Faculty participation and institutional affiliation are separate decisions.
 
 10. **Expand baseline verification with CleanHouse and Zaelith.** [OPTIONAL INTEGRATION]
    - Define portable baseline evidence for a device, a website or SaaS release, and a service or entity’s approved components, identity, authority and policy.
