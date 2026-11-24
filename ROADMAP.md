@@ -59,6 +59,7 @@
    - Use the local counterpart during a LIFE sandbox outage. A separate operator builds and publishes a compatible extension, then proves interoperability and unsupported-version handling with an independent peer.
    - **UAT supervised replication.** Ask for one faculty sponsor and one supervised student team. LIFE supplies the signed kit, guide, reference peer, test fixture, receipt template and support contact. The team installs the kit in a UAT-approved environment, controls its own node, keys and local policy, and reproduces one allowed exchange, one denial, and rejoin after LIFE restores its service.
    - **UAT receipt.** Record the observed results, where LIFE assistance was required, and specific documentation gaps. Faculty participation and institutional affiliation are separate decisions.
+   - **UAT student development.** After replication, ask the faculty sponsor whether a student-led independent client or conformance tool fits a supervised course or Student Innovation Project. Agree on scope, supervision, ownership and publication terms before work starts. LIFE provides the published interface, fixtures and review support. The student team delivers a compatible extension and an interoperability receipt.
 
 10. **Expand baseline verification with CleanHouse and Zaelith.** [OPTIONAL INTEGRATION]
    - Define portable baseline evidence for a device, a website or SaaS release, and a service or entity’s approved components, identity, authority and policy.
@@ -68,16 +69,19 @@
 11. **Complete the simulated quantum workflow.** [CLOUD ONLY]
    - Model endpoints, local leases, channel conditions, reservation, herald, delivery, cancellation, expiry and independent resource release. Publish initial states, measurement bases, scheduler and reproducibility settings.
    - Exercise superposition, entanglement and measurement as distinct model behaviors. Replay independently and score trace invariants. Label every result simulated.
+   - **UAT simulation replication.** Invite a supervised team to rerun the declared model independently and return its configuration, trace, expected and observed results, and documentation gaps.
 
 12. **Establish LIFE’s flagship physical lab.** [LAB QUALIFICATION]
    - Define the first two-endpoint claim, apparatus and channel, operator and instrument identities, calibration, measurement basis, timing budget and release procedure before collecting data.
    - Qualify equipment and local lease enforcement. A guided software setup cannot replace instrument calibration or physical qualification.
    - Keep public Internet access independent of laboratory interruption. Verify that both labs release or reconcile their own allocations before closing a run.
+   - **UAT facilities and expertise assessment.** Share the proposed apparatus, controls, instrumentation, fabrication, calibration and supervision requirements. Ask UAT which defined task it can support or whether it can refer LIFE to a qualified laboratory. Record the available facilities, access conditions, responsible staff and costs before assigning physical work.
 
 13. **Verify physical quantum operation and telemetry.** [INDEPENDENT PROOF]
    - Perform an authorized physical experiment only after lab approvals. Retain linked trial and instrument IDs, eligible and rejected attempts, calibrated outcomes, uncertainty, fidelity and usable-pair rate.
    - Score herald detection, eligible delivery, measured entanglement and reproduction separately. Have a second independently administered lab recompute the result and follow the reproduction protocol.
    - Test the distinction between a closed classical crossing and a retained pair under local lease. Any later teleportation uses a fresh authorized classical path and consumes the pair.
+   - **UAT physical research contribution.** After LIFE has a defined experiment, qualified facilities and the necessary approvals, ask UAT for a specific contribution matched to verified capability. Options include a classical controller, measurement analysis or supervised replication with a qualified lab. Agree on deliverables, evidence, safety responsibilities, credit and data terms.
 
 14. **Decide where distributed consensus belongs.** [BLOCKCHAIN COMPARISON]
    - Exercise bilateral signed records and witnessed checkpoints for claims that require attribution and audit. Identify an actual shared record with competing authorized writes before advancing blockchain.
@@ -86,6 +90,7 @@
 15. **Prepare institutional and sustainable operating agreements.** [PARALLEL]
    - Develop a review-ready technical or digital-inclusion collaboration proposal for relevant Commonwealth institutions. Identify beneficiaries, prospective host, contributions, expected evidence and costs.
    - Define site funding, support, capacity, sponsor transfer and orderly closure while preserving free-to-user access. Track exploratory, submitted and accepted status distinctly.
+   - **UAT partnership and endorsement decision.** After independent replication, review the receipts with the faculty sponsor and assess whether to propose a formal research partnership, defined development assistance or an institutional endorsement. Specify exactly what each party would commit to and who has authority to approve it. Faculty or student participation alone grants no endorsement. Any request or public statement requires separate authorization.
 
 16. **Publish the independent operator release.** [RELEASE GATE]
    - Verify license and contribution terms with the rights holder, reproducible packages and docs, operator recovery, independent conformance, and appropriate security and support evidence.
