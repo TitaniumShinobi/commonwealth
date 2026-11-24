@@ -160,7 +160,7 @@ class Case:
             result = self.call(request["envelope"]["recipient"], request)
             for emitted in result.get("emit", []):
                 heapq.heappush(pending, self.envelope(tick, emitted["recipient"], emitted["sender"],
-                                                     "federation", emitted["payload"]))
+                                                     emitted.get("purpose", "federation"), emitted["payload"]))
             yield result
         for role in ROLES:
             if self.call(role, {"kind": "close_tick", "tick": tick}) != {"closed": tick}:
@@ -191,7 +191,7 @@ class Case:
                                      "expected": action["expected"], "observed": actual,
                                      "matches": reply.get("decision") == "accepted" and actual == action["expected"]})
 
-    def run_federation(self, steps):
+    def run_scripted(self, steps, purpose):
         next_tick = 0
         for step in steps:
             tick = step["tick"]
@@ -202,7 +202,10 @@ class Case:
                 descriptor = self.topology["federation"]["locator"]
                 signature = tag(self.topology["keys"]["op-a"]["operator"], descriptor)
                 payload["locator"] = {"data": descriptor, "tag": signature}
-            pending = [self.envelope(tick, step["actor"], step["sender"], "federation", payload)]
+            pending = [self.envelope(tick, step["actor"], step["sender"], purpose, payload)]
+            for peer in step.get("also", []):
+                heapq.heappush(pending, self.envelope(tick, peer["actor"], peer["sender"],
+                                                     purpose, peer["input"]))
             start = len(self.trace)
             list(self.advance(tick, pending))
             seen = {}
@@ -234,8 +237,8 @@ def execute(topology, path, run, fixture, suite_deadline, action=None, suite='st
             case.start(Path(directory))
             if action is None:
                 case.smoke(Path(directory))
-            elif suite == 'step-4':
-                case.run_federation(action)
+            elif suite in ("step-4", "step-5"):
+                case.run_scripted(action, "federation" if suite == "step-4" else "household")
             else:
                 case.run_fixture(action)
         except (OSError, RuntimeError, TimeoutError, ValueError, KeyError) as exc:
@@ -257,7 +260,7 @@ def main():
     parser.add_argument("command", choices=("smoke", "run"))
     parser.add_argument("--topology", type=Path, required=True)
     parser.add_argument("--cases", type=Path)
-    parser.add_argument("--suite", choices=("step-3", "step-4"))
+    parser.add_argument("--suite", choices=("step-3", "step-4", "step-5"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     revision = os.getenv("CHECKOUT_SHA")
@@ -310,7 +313,7 @@ def main():
                        "UNVERIFIED" if not results or "UNVERIFIED" in results.values() else "PASS")
             save(directory / "summary.json", {"verdict": verdict, "cases": results,
                  "later_cases": {name: "UNVERIFIED" for name in cases["later"]
-                                 if args.suite != "step-4" or not name.startswith("step-4-")}, "revision": revision})
+                                 if int(name.split("-")[1]) > int(args.suite.split("-")[1])}, "revision": revision})
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         target = args.out if args.command == "smoke" else directory / "summary.json"
         verdict = "FAIL" if "FAIL" in locals().get("results", {}).values() else "UNVERIFIED"

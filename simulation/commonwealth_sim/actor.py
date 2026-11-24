@@ -120,6 +120,8 @@ class Actor:
         self.sequence = {}
         self.closed_tick = -1
         from .federation import Federation
+        from .household import Household
+        self.household = Household(role, topology)
         self.federation = Federation(role, directory, topology)
         self.access = Access(topology["access"]) if role == "access" else None
 
@@ -141,13 +143,15 @@ class Actor:
             return {"decision": "stale_rejected"}
         permitted = (sender, purpose) == ("harness", "smoke") or (
             self.role == "access" and (sender, purpose) == ("access-operator", "access"))
-        if not permitted and purpose != "federation":
+        if not permitted and purpose not in ("federation", "household"):
             return {"decision": "authority_rejected"}
         self.accepted[identity] = digest
         self.sequence[sender] = envelope["sequence"]
         if purpose == "smoke":
             return {"decision": "accepted", "role": self.role,
                     "state_directory": str(self.directory), "limits": list(resource.getrlimit(resource.RLIMIT_AS))}
+        if purpose == "household":
+            return {"decision": "accepted", **self.household.apply(sender, tick, envelope["payload"])}
         if purpose == "federation":
             return {"decision": "accepted", **self.federation.apply(sender, tick, envelope["payload"])}
         return {"decision": "accepted", "observation": self.access.apply(tick, envelope["payload"])}

@@ -2037,5 +2037,1308 @@
         }
       }
     ]
+  },
+  "step-5": {
+    "identity_and_scope": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "enroll_device",
+          "device": "viewer-device",
+          "challenge": "forged"
+        },
+        "expect": {
+          "enroll_device": {
+            "decision": "local_authority_denied"
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "enroll_device",
+          "device": "viewer-device",
+          "challenge": "challenge:viewer-device"
+        },
+        "expect": {
+          "enroll_device": {
+            "decision": "enrolled",
+            "device": "viewer-device",
+            "appraised": false
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "grant",
+          "id": "grant-1",
+          "subject": "op-b",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "expires": 60
+        },
+        "expect": {
+          "grant": {
+            "decision": "granted",
+            "revision": 1,
+            "id": "grant-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "read-1",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "device_evidence_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "a-authority",
+        "sender": "fixture-verifier",
+        "input": {
+          "op": "appraise",
+          "device": "viewer-device",
+          "challenge": "wrong",
+          "evidence": "fixture-supported-device"
+        },
+        "expect": {
+          "appraise": {
+            "decision": "appraisal_denied"
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "a-authority",
+        "sender": "fixture-verifier",
+        "input": {
+          "op": "appraise",
+          "device": "viewer-device",
+          "challenge": "challenge:viewer-device",
+          "evidence": "fixture-supported-device"
+        },
+        "expect": {
+          "appraise": {
+            "decision": "appraised",
+            "expires": 25
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "a-authority",
+        "sender": "fixture-verifier",
+        "input": {
+          "op": "appraise",
+          "device": "viewer-device",
+          "challenge": "challenge:viewer-device",
+          "evidence": "fixture-supported-device"
+        },
+        "expect": {
+          "appraise": {
+            "decision": "appraisal_denied"
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "open",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view"
+        },
+        "expect": {
+          "open": {
+            "decision": "opened",
+            "credential": "scoped:cross-1",
+            "crossing": "cross-1",
+            "revision": 1
+          }
+        }
+      },
+      {
+        "tick": 8,
+        "actor": "a-application",
+        "sender": "op-b",
+        "input": {
+          "op": "boundary",
+          "workload": "viewer-workload",
+          "target": "calendar-gateway",
+          "tenant": "household",
+          "path": "controlled-interface",
+          "request": {
+            "device": "viewer-device",
+            "workload": "viewer-workload",
+            "crossing": "cross-1",
+            "grant": "grant-1",
+            "resource": "household/calendar",
+            "audience": "calendar-gateway",
+            "action": "calendar.view",
+            "credential": "scoped:cross-1",
+            "operation": "read-1",
+            "mode": "now",
+            "body": "fixture-body"
+          }
+        },
+        "expect": {
+          "boundary": {
+            "decision": "forwarded_to_gateway",
+            "target": "calendar-gateway"
+          },
+          "action": {
+            "decision": "allowed",
+            "record": {
+              "id": "calendar-01",
+              "value": "synthetic-view"
+            }
+          }
+        }
+      },
+      {
+        "tick": 9,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.edit",
+          "credential": "scoped:cross-1",
+          "operation": "scope",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "scope_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "other-tenant/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "tenant",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "scope_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 11,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "other-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "audience",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "scope_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 12,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "unapproved-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "workload",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "workload_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 13,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "unapproved-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "device",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "device_evidence_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 14,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "authority",
+          "available": false
+        },
+        "expect": {
+          "authority": {
+            "decision": "authority_updated",
+            "available": false
+          }
+        }
+      },
+      {
+        "tick": 15,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "read-1",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "current_authority_unavailable",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 16,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "authority",
+          "available": true
+        },
+        "expect": {
+          "authority": {
+            "decision": "authority_updated",
+            "available": true
+          }
+        }
+      },
+      {
+        "tick": 17,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "read-1",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "stored_result",
+            "record": {
+              "id": "calendar-01",
+              "value": "synthetic-view"
+            }
+          }
+        }
+      },
+      {
+        "tick": 25,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "read-1",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "device_evidence_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 26,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "inspect",
+          "crossing": "cross-1"
+        },
+        "expect": {
+          "inspect": {
+            "decision": "state",
+            "effect_count": 1,
+            "pending": []
+          }
+        }
+      }
+    ],
+    "execution_isolation": [
+      {
+        "tick": 0,
+        "actor": "a-application",
+        "sender": "op-b",
+        "input": {
+          "op": "boundary",
+          "workload": "viewer-workload",
+          "target": "tenant-storage",
+          "tenant": "other-tenant",
+          "path": "direct"
+        },
+        "expect": {
+          "boundary": {
+            "decision": "boundary_denied",
+            "target": "tenant-storage",
+            "protected_payload": false
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "a-application",
+        "sender": "op-b",
+        "input": {
+          "op": "boundary",
+          "workload": "viewer-workload",
+          "target": "management",
+          "tenant": "operator",
+          "path": "direct"
+        },
+        "expect": {
+          "boundary": {
+            "decision": "boundary_denied",
+            "target": "management",
+            "protected_payload": false
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-application",
+        "sender": "op-b",
+        "input": {
+          "op": "boundary",
+          "workload": "viewer-workload",
+          "target": "household-storage",
+          "tenant": "household",
+          "path": "direct"
+        },
+        "expect": {
+          "boundary": {
+            "decision": "boundary_denied",
+            "target": "household-storage",
+            "protected_payload": false
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "a-application",
+        "sender": "op-b",
+        "input": {
+          "op": "boundary",
+          "workload": "unknown-workload",
+          "target": "calendar-gateway",
+          "tenant": "household",
+          "path": "controlled-interface"
+        },
+        "expect": {
+          "boundary": {
+            "decision": "boundary_denied",
+            "target": "calendar-gateway",
+            "protected_payload": false
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "a-application",
+        "sender": "op-b",
+        "input": {
+          "op": "boundary",
+          "workload": "viewer-workload",
+          "target": "calendar-gateway",
+          "tenant": "household",
+          "path": "controlled-interface"
+        },
+        "expect": {
+          "boundary": {
+            "decision": "forwarded_to_gateway",
+            "target": "calendar-gateway",
+            "protected_payload": false
+          }
+        }
+      }
+    ],
+    "withdrawal_and_cleanup": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "enroll_device",
+          "device": "viewer-device",
+          "challenge": "challenge:viewer-device"
+        },
+        "expect": {
+          "enroll_device": {
+            "decision": "enrolled",
+            "device": "viewer-device",
+            "appraised": false
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "a-authority",
+        "sender": "fixture-verifier",
+        "input": {
+          "op": "appraise",
+          "device": "viewer-device",
+          "challenge": "challenge:viewer-device",
+          "evidence": "fixture-supported-device"
+        },
+        "expect": {
+          "appraise": {
+            "decision": "appraised",
+            "expires": 21
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "grant",
+          "id": "grant-1",
+          "subject": "op-b",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "expires": 60
+        },
+        "expect": {
+          "grant": {
+            "decision": "granted",
+            "revision": 1,
+            "id": "grant-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "open",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view"
+        },
+        "expect": {
+          "open": {
+            "decision": "opened",
+            "credential": "scoped:cross-1",
+            "crossing": "cross-1",
+            "revision": 1
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "open",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "idle-cross",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view"
+        },
+        "expect": {
+          "open": {
+            "decision": "opened",
+            "credential": "scoped:idle-cross",
+            "crossing": "idle-cross",
+            "revision": 1
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "enroll_device",
+          "device": "control-device",
+          "challenge": "challenge:control-device"
+        },
+        "expect": {
+          "enroll_device": {
+            "decision": "enrolled",
+            "device": "control-device",
+            "appraised": false
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "a-authority",
+        "sender": "fixture-verifier",
+        "input": {
+          "op": "appraise",
+          "device": "control-device",
+          "challenge": "challenge:control-device",
+          "evidence": "fixture-supported-device"
+        },
+        "expect": {
+          "appraise": {
+            "decision": "appraised",
+            "expires": 26
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "grant",
+          "id": "grant-other",
+          "subject": "op-b-control",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "expires": 60
+        },
+        "expect": {
+          "grant": {
+            "decision": "granted",
+            "revision": 2,
+            "id": "grant-other"
+          }
+        }
+      },
+      {
+        "tick": 8,
+        "actor": "a-authority",
+        "sender": "op-b-control",
+        "input": {
+          "op": "open",
+          "device": "control-device",
+          "workload": "control-workload",
+          "crossing": "control-cross",
+          "grant": "grant-other",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view"
+        },
+        "expect": {
+          "open": {
+            "decision": "opened",
+            "credential": "scoped:control-cross",
+            "crossing": "control-cross",
+            "revision": 2
+          }
+        }
+      },
+      {
+        "tick": 9,
+        "actor": "a-authority",
+        "sender": "op-b-control",
+        "input": {
+          "op": "action",
+          "device": "control-device",
+          "workload": "control-workload",
+          "crossing": "control-cross",
+          "grant": "grant-other",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:control-cross",
+          "operation": "control-before",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "allowed",
+            "record": {
+              "id": "calendar-01",
+              "value": "synthetic-view"
+            }
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "read-1",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "allowed",
+            "record": {
+              "id": "calendar-01",
+              "value": "synthetic-view"
+            }
+          }
+        }
+      },
+      {
+        "tick": 11,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "queued",
+          "mode": "queue",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "queued",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 12,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "inspect",
+          "crossing": "cross-1"
+        },
+        "expect": {
+          "inspect": {
+            "decision": "state",
+            "session": true,
+            "credential": "scoped:cross-1",
+            "buffer": "transient:cross-1",
+            "pending": [
+              "queued"
+            ],
+            "effect_count": 1,
+            "closed": false,
+            "revision": 2,
+            "grant_revoked": false
+          }
+        }
+      },
+      {
+        "tick": 13,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "read-1",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "stored_result",
+            "record": {
+              "id": "calendar-01",
+              "value": "synthetic-view"
+            }
+          }
+        }
+      },
+      {
+        "tick": 14,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "close",
+          "crossing": "cross-1"
+        },
+        "expect": {
+          "close": {
+            "decision": "state",
+            "session": false,
+            "credential": null,
+            "buffer": null,
+            "pending": [],
+            "effect_count": 1,
+            "closed": true,
+            "revision": 3,
+            "grant_revoked": true
+          },
+          "action": {
+            "decision": "grant_inactive",
+            "disclosed": false
+          }
+        },
+        "also": [
+          {
+            "actor": "a-authority",
+            "sender": "op-b",
+            "input": {
+              "op": "action",
+              "device": "viewer-device",
+              "workload": "viewer-workload",
+              "crossing": "cross-1",
+              "grant": "grant-1",
+              "resource": "household/calendar",
+              "audience": "calendar-gateway",
+              "action": "calendar.view",
+              "credential": "scoped:cross-1",
+              "operation": "read-1",
+              "mode": "now",
+              "body": "fixture-body"
+            }
+          }
+        ]
+      },
+      {
+        "tick": 15,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "inspect",
+          "crossing": "idle-cross"
+        },
+        "expect": {
+          "inspect": {
+            "decision": "state",
+            "session": false,
+            "credential": null,
+            "buffer": null,
+            "pending": [],
+            "effect_count": 0,
+            "closed": true,
+            "revision": 3,
+            "grant_revoked": true
+          }
+        }
+      },
+      {
+        "tick": 16,
+        "actor": "a-authority",
+        "sender": "a-worker",
+        "input": {
+          "op": "commit",
+          "crossing": "cross-1",
+          "operation": "queued"
+        },
+        "expect": {
+          "commit": {
+            "decision": "grant_inactive",
+            "committed": false,
+            "effect_count": 1
+          }
+        }
+      },
+      {
+        "tick": 17,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "close",
+          "crossing": "cross-1"
+        },
+        "expect": {
+          "close": {
+            "decision": "state",
+            "session": false,
+            "credential": null,
+            "buffer": null,
+            "pending": [],
+            "effect_count": 1,
+            "closed": true,
+            "revision": 3,
+            "grant_revoked": true
+          }
+        }
+      },
+      {
+        "tick": 18,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "inspect",
+          "crossing": "cross-1"
+        },
+        "expect": {
+          "inspect": {
+            "decision": "state",
+            "session": false,
+            "credential": null,
+            "buffer": null,
+            "pending": [],
+            "effect_count": 1,
+            "closed": true,
+            "revision": 3,
+            "grant_revoked": true
+          }
+        }
+      },
+      {
+        "tick": 19,
+        "actor": "b",
+        "sender": "fixture-probe",
+        "input": {
+          "op": "source_health"
+        },
+        "expect": {
+          "source_health": {
+            "decision": "healthy",
+            "domain": "b"
+          }
+        }
+      },
+      {
+        "tick": 20,
+        "actor": "a-application",
+        "sender": "fixture-probe",
+        "input": {
+          "op": "destination_health"
+        },
+        "expect": {
+          "destination_health": {
+            "decision": "healthy",
+            "domain": "a-application"
+          }
+        }
+      },
+      {
+        "tick": 21,
+        "actor": "a-authority",
+        "sender": "op-b-control",
+        "input": {
+          "op": "action",
+          "device": "control-device",
+          "workload": "control-workload",
+          "crossing": "control-cross",
+          "grant": "grant-other",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:control-cross",
+          "operation": "control-after",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "allowed",
+            "record": {
+              "id": "calendar-01",
+              "value": "synthetic-view"
+            }
+          }
+        }
+      }
+    ],
+    "fresh_crossing": [
+      {
+        "tick": 0,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "enroll_device",
+          "device": "viewer-device",
+          "challenge": "challenge:viewer-device"
+        },
+        "expect": {
+          "enroll_device": {
+            "decision": "enrolled",
+            "device": "viewer-device",
+            "appraised": false
+          }
+        }
+      },
+      {
+        "tick": 1,
+        "actor": "a-authority",
+        "sender": "fixture-verifier",
+        "input": {
+          "op": "appraise",
+          "device": "viewer-device",
+          "challenge": "challenge:viewer-device",
+          "evidence": "fixture-supported-device"
+        },
+        "expect": {
+          "appraise": {
+            "decision": "appraised",
+            "expires": 21
+          }
+        }
+      },
+      {
+        "tick": 2,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "grant",
+          "id": "grant-1",
+          "subject": "op-b",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "expires": 60
+        },
+        "expect": {
+          "grant": {
+            "decision": "granted",
+            "revision": 1,
+            "id": "grant-1"
+          }
+        }
+      },
+      {
+        "tick": 3,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "open",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view"
+        },
+        "expect": {
+          "open": {
+            "decision": "opened",
+            "credential": "scoped:cross-1",
+            "crossing": "cross-1",
+            "revision": 1
+          }
+        }
+      },
+      {
+        "tick": 4,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "close",
+          "crossing": "cross-1"
+        },
+        "expect": {
+          "close": {
+            "decision": "state",
+            "session": false,
+            "credential": null,
+            "buffer": null,
+            "pending": [],
+            "effect_count": 0,
+            "closed": true,
+            "revision": 2,
+            "grant_revoked": true
+          }
+        }
+      },
+      {
+        "tick": 5,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "open",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "new-with-old-grant",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view"
+        },
+        "expect": {
+          "open": {
+            "decision": "grant_inactive"
+          }
+        }
+      },
+      {
+        "tick": 6,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "grant",
+          "id": "grant-next",
+          "subject": "op-b",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "expires": 60
+        },
+        "expect": {
+          "grant": {
+            "decision": "granted",
+            "revision": 3,
+            "id": "grant-next"
+          }
+        }
+      },
+      {
+        "tick": 7,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "open",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-renewed",
+          "grant": "grant-next",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view"
+        },
+        "expect": {
+          "open": {
+            "decision": "opened",
+            "credential": "scoped:cross-renewed",
+            "crossing": "cross-renewed",
+            "revision": 3
+          }
+        }
+      },
+      {
+        "tick": 8,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-renewed",
+          "grant": "grant-next",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "first-renewed",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "crossing_denied",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 9,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-1",
+          "grant": "grant-1",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-1",
+          "operation": "read-1",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "grant_inactive",
+            "disclosed": false
+          }
+        }
+      },
+      {
+        "tick": 10,
+        "actor": "a-authority",
+        "sender": "op-b",
+        "input": {
+          "op": "action",
+          "device": "viewer-device",
+          "workload": "viewer-workload",
+          "crossing": "cross-renewed",
+          "grant": "grant-next",
+          "resource": "household/calendar",
+          "audience": "calendar-gateway",
+          "action": "calendar.view",
+          "credential": "scoped:cross-renewed",
+          "operation": "first-renewed",
+          "mode": "now",
+          "body": "fixture-body"
+        },
+        "expect": {
+          "action": {
+            "decision": "allowed",
+            "record": {
+              "id": "calendar-01",
+              "value": "synthetic-view"
+            }
+          }
+        }
+      },
+      {
+        "tick": 11,
+        "actor": "a-authority",
+        "sender": "a-admin",
+        "input": {
+          "op": "inspect",
+          "crossing": "cross-1"
+        },
+        "expect": {
+          "inspect": {
+            "decision": "state",
+            "session": false,
+            "credential": null,
+            "buffer": null,
+            "pending": [],
+            "effect_count": 0,
+            "closed": true,
+            "revision": 3,
+            "grant_revoked": true
+          }
+        }
+      }
+    ]
   }
 }

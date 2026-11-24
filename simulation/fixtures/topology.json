@@ -15,7 +15,8 @@
     },
     "op-b": {
       "peer": "public-b-peer",
-      "federation": "public-op-b-federation"
+      "federation": "public-op-b-federation",
+      "household": "public-step5-op-b"
     },
     "a-steward": {
       "restore": "public-a-steward-restore"
@@ -25,6 +26,21 @@
     },
     "control-peer": {
       "federation": "public-control-peer-federation"
+    },
+    "a-admin": {
+      "household": "public-step5-a-admin"
+    },
+    "a-worker": {
+      "household": "public-step5-a-worker"
+    },
+    "fixture-verifier": {
+      "household": "public-step5-fixture-verifier"
+    },
+    "fixture-probe": {
+      "household": "public-step5-fixture-probe"
+    },
+    "op-b-control": {
+      "household": "public-step5-op-b-control"
     }
   },
   "access": {
@@ -72,6 +88,23 @@
       "url": "https://discovery.a.test",
       "pin": "fixture-discovery-A",
       "revision": 1
+    }
+  },
+  "household": {
+    "appraisal_ticks": 20,
+    "record": {
+      "id": "calendar-01",
+      "value": "synthetic-view"
+    },
+    "workloads": {
+      "op-b": {
+        "identity": "viewer-workload",
+        "device": "viewer-device"
+      },
+      "op-b-control": {
+        "identity": "control-workload",
+        "device": "control-device"
+      }
     }
   }
 }
