@@ -1,0 +1,88 @@
+// Commonwealth Roadmap
+
+**THE PEOPLE’S NETWORK.**
+
+**FREE TO PARTICIPANTS. INDEPENDENTLY OPERATED.**
+
+**CLASSICAL ACCESS. REPRODUCIBLE QUANTUM RESEARCH.**
+
+1. **Finish the service rubric.** [YOU ARE HERE]
+   - Use [COMMONWEALTH.md](COMMONWEALTH.md) as the working draft. Carry forward its approved flows, interfaces and Security boundaries.
+   - Add worked superposition and measurement, LIFE Containerism and rematerialization, and a comparison of bilateral signed records, witnessed logs and blockchain consensus. Keep telemetry provenance, measurement and verdict separate.
+   - QC + CleanGPT: score every changed requirement against the source decision and an observable result. Record a revision-bound verdict. Keep the website rubric separate.
+
+2. **Pin the cloud implementation baseline.** [HYDRO]
+   - Scout records the exact repository revision and available cloud runner. Designer and EngineerGPT agree on the first topology, commands, fixtures, recovery limits and acceptance receipts.
+   - Arbiter resolves blocking product decisions. Pad implements the agreed scope. QC checks the resulting revision independently and CleanGPT checks the operator materials.
+   - Use the existing HYDRO roles for development. The product runtime operates without HYDRO, MDBO, AUTO, Chatty CLI or an AI model.
+
+3. **Start the classical network simulation.** [CLOUD ONLY]
+   - Use two operator instances with separate keys, policies, and administrative access, plus one protected service and one independent control workload.
+   - Exercise device attachment, address, gateway and resolver provisioning, forwarding and isolation in the selected test topology. Record the configuration, exact run commands and observations.
+   - Keep the simulated site path distinct from a real field access result.
+
+4. **Finish first peer exchange and service discovery.** [CLOUD ONLY]
+   - Start a peer with an empty service cache. Enroll each operator locally, verify the discovery locator and publication authority, and resolve the first service endpoint.
+   - Exercise a permitted request, a destination-policy denial, a moved endpoint, expiry, conflicting and stale records, and peer exit. Score authenticated unavailability, timeout and TLS failure separately.
+   - Receipt: exact operator and configuration revisions, lookup and binding decisions, request outcomes, and evidence that unrelated exchanges continue.
+
+5. **Complete household controls and crossing cleanup.** [SECURITY]
+   - Exercise tenant and management separation, enrolled device and workload identities, scoped grants, isolated application execution and current-policy checks. Verify withdrawal against active and queued work.
+   - Close one crossing while the sender retries. Invalidate its authorization and clear the temporary state within its defined boundary. Verify that both domains and an unrelated crossing keep operating.
+   - Treat cleanup of retained material as a separately approved scope. Keep laboratory memory under its own local lease and apparatus lifecycle.
+
+6. **Complete the first routine rematerialization test.** [CLOUD ONLY]
+   - Operator A’s authorized steward restores one service from a trusted backup onto a clean replacement host. Fence the old host, restore verified data and publish the replacement under the same logical service identity.
+   - Operator B accepts the valid replacement under its existing trust and policy. B’s independent workload stays within its continuity limit. Record recovery time, restored-data age, and evidence of zero founder intervention.
+   - Separately score revoked credentials, tampered backup and unauthorized rejoin. Exercise authority-store recovery without restoring stale policy or revocation state.
+
+7. **Prepare the real Internet pilot.** [PARALLEL FIELD TRACK · TARGET NOVEMBER 30, 2026 · LIVE ACTIVATION HELD]
+   - Prepare this track alongside cloud simulation. Score readiness from site and service evidence.
+   - Confirm one approved site, accountable operator and funding owner, permitted participant use, authorized upstream, compatible equipment, support and recovery responsibilities.
+   - Use an existing authorized uplink when available. Starlink, fiber and terrestrial radio are candidates. Confirm the actual provider arrangement and any costs at the site.
+   - Prepare the field runbook and rollback. Authorized field pass: a real participant gets a network configuration, resolves names and completes public HTTPS at $0. Score load, isolation, withdrawal, interruption and recovery separately.
+   - Keep the target on the roadmap if evidence is missing. Record the unmet gate. Live activation requires explicit authorization.
+
+8. **Start the Commonwealth Kit and LIFE reference node.** [FLAGSHIP LAB]
+   - Package a versioned release with a verifiable trust root, client and node, documented commands, simulator, conformance fixtures and lab adapter interface.
+   - LIFE operates the reference node, service, sandbox and release channels in the proposed operating model. Disclose LIFE as a reference peer and require local acceptance at enrollment.
+   - Offer Connect to a service, Run a node and Connect a lab. Verify the entire software setup path on a clean supported environment.
+
+9. **Finish guides, official plugins and independent setup.** [PLUG AND PLAY]
+   - Provide guided clicks, equivalent how-to commands and optional official plugins for supported AI hosts. Cover installation, first exchange, common failures, upgrades, exit and restore.
+   - Keep secrets and privileged controls under local authority. Demonstrate a rejected unauthorized plugin change, unchanged target state and no credential disclosure.
+   - Use the local counterpart during a LIFE sandbox outage. A separate operator builds and publishes a compatible extension, then proves interoperability and unsupported-version handling with an independent peer.
+
+10. **Expand baseline verification with CleanHouse and Zaelith.** [OPTIONAL INTEGRATION]
+   - Define portable baseline evidence for a device, a website or SaaS release, and a service or entity’s approved components, identity, authority and policy.
+   - Have the restoring operator produce an integrity receipt with CleanHouse or a compatible verifier. Have the receiving operator make its own acceptance decision. Exercise one altered baseline, one valid restore and one closed crossing.
+   - Evaluate Zaelith for explaining the resulting evidence through a supported plugin. Commonwealth setup, access, federation and recovery retain a complete path without either optional integration.
+
+11. **Complete the simulated quantum workflow.** [CLOUD ONLY]
+   - Model endpoints, local leases, channel conditions, reservation, herald, delivery, cancellation, expiry and independent resource release. Publish initial states, measurement bases, scheduler and reproducibility settings.
+   - Exercise superposition, entanglement and measurement as distinct model behaviors. Replay independently and score trace invariants. Label every result simulated.
+
+12. **Establish LIFE’s flagship physical lab.** [LAB QUALIFICATION]
+   - Define the first two-endpoint claim, apparatus and channel, operator and instrument identities, calibration, measurement basis, timing budget and release procedure before collecting data.
+   - Qualify equipment and local lease enforcement. A guided software setup cannot replace instrument calibration or physical qualification.
+   - Keep public Internet access independent of laboratory interruption. Verify that both labs release or reconcile their own allocations before closing a run.
+
+13. **Verify physical quantum operation and telemetry.** [INDEPENDENT PROOF]
+   - Perform an authorized physical experiment only after lab approvals. Retain linked trial and instrument IDs, eligible and rejected attempts, calibrated outcomes, uncertainty, fidelity and usable-pair rate.
+   - Score herald detection, eligible delivery, measured entanglement and reproduction separately. Have a second independently administered lab recompute the result and follow the reproduction protocol.
+   - Test the distinction between a closed classical crossing and a retained pair under local lease. Any later teleportation uses a fresh authorized classical path and consumes the pair.
+
+14. **Decide where distributed consensus belongs.** [BLOCKCHAIN COMPARISON]
+   - Exercise bilateral signed records and witnessed checkpoints for claims that require attribution and audit. Identify an actual shared record with competing authorized writes before advancing blockchain.
+   - Compare authority, cost, ordering, finality, partition operation and recovery for each model. If consensus is selected, prove the chosen record’s behavior with independent validators.
+
+15. **Prepare institutional and sustainable operating agreements.** [PARALLEL]
+   - Develop a review-ready technical or digital-inclusion collaboration proposal for relevant Commonwealth institutions. Identify beneficiaries, prospective host, contributions, expected evidence and costs.
+   - Define site funding, support, capacity, sponsor transfer and orderly closure while preserving free-to-user access. Track exploratory, submitted and accepted status distinctly.
+
+16. **Publish the independent operator release.** [RELEASE GATE]
+   - Verify license and contribution terms with the rights holder, reproducible packages and docs, operator recovery, independent conformance, and appropriate security and support evidence.
+   - Pick the release scope from the evidence that passed. Track real access, classical federation, simulation and physical quantum claims separately.
+   - Complete independent QC and CleanGPT review of the exact release candidate and receipts before publishing through the approved channels.
+
+Sources: [COMMONWEALTH.md](COMMONWEALTH.md) · [CleanHouse roadmap template](https://github.com/TitaniumShinobi/cleanhouse/blob/master/ROADMAP.md) · LIFE Technology Master Roadmap, product portfolio and chronological order · Commonwealth project brief and Commonwealth Launch Plan discussions · Pre-reset AI Conversations Backup, historical HYDRO and rematerialization context.
