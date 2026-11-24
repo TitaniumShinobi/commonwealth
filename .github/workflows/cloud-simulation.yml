@@ -36,6 +36,33 @@ jobs:
         run: |
           export CHECKOUT_SHA="$(git rev-parse HEAD)"
           python3 -m commonwealth_sim run --topology simulation/fixtures/topology.json --cases simulation/fixtures/cases.json --suite step-3 --out "$RUNNER_TEMP/commonwealth/step-3"
+      - name: Expose bounded synthetic acceptance receipts
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "commonwealth"
+          names = (
+              "execution-manifest.json", "smoke.json",
+              "step-3/execution-manifest.json", "step-3/summary.json",
+              "step-3/access.json", "step-3/dns.json",
+              "step-3/isolation.json", "step-3/withdrawal.json",
+          )
+          for name in names:
+              path = root / name
+              if not path.is_file():
+                  print(json.dumps({"receipt": name, "status": "missing"}))
+                  continue
+              data = json.loads(path.read_text())
+              record = {key: data[key] for key in data if key not in ("trace", "diagnostics")}
+              envelope = json.dumps({"receipt": name, "data": record}, ensure_ascii=True, separators=(",", ":"))
+              if len(envelope) > 16384:
+                  print(json.dumps({"receipt": name, "status": "exceeds log bound"}))
+                  continue
+              print(envelope)
+          PY
       - name: Preserve simulation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
