@@ -446,6 +446,33 @@ current_authority_check, decision, enforcement_point
 
 *Source anchors · Commonwealth ISP, “Security: Protecting the Household,” “The Proposed Architecture,” and “Toward a Quantum Internet.” Arbiter, Commonwealth Kit ruling, optional AI and enforcement, and proof boundaries. Designer, plugin authority and crossing cleanup. Clean, security controls and evidence obligations.*
 
+### LIFE Containerism · Scoped crossing, removal, and rematerialization
+
+◆ **One authority per fact class, within its scope.** The household store decides whether a household grant is current. The local operator controls the viewer workload’s identity and runtime lifecycle. The publishing operator owns the service binding and its revisions. Each lab controls readiness, leases, and apparatus state for its own equipment. A cache, status display, or exported receipt can report a fact with its provenance. The controlling authority still makes the decision. Shared authentication or VVAULT can be evaluated as optional infrastructure with a declared role. This case requires neither.
+
+**Proposed worked fixture · Calendar viewer and optional quantum adapter.** The application operator starts with an independently deployed viewer and a known calendar record. The household administrator issues `calendar:view` for that workload, resource, and audience. The operator identifies the resource interface, any discovery dependency, the destination enforcement point, and the ordinary Internet path used as a control. The lab steward identifies the optional adapter and the capabilities that depend on it.
+
+```text
+Viewer workload -- service ID + authenticated discovery --> verified resource binding
+Viewer -- workload identity + scoped calendar:view grant --> controlled interface
+Destination -- current household decision --> permitted view or scoped denial
+
+Remove viewer  -> viewer access ends; independent service and public-path probes continue
+Remove adapter -> dependent quantum capability reports unavailable; ordinary access continues
+Lose authority -> protected action blocked; independent public-path probe continues
+```
+
+1. **Discover and cross.** The viewer resolves the declared service ID through the approved route, verifies the destination binding, and sends the typed view request. The destination checks the actual source tenant and workload, destination resource and tenant, action, audience, expiry, and current household authority. The viewer receives the permitted record. The reviewer traces the returned fields to the view grant and the destination decision.
+2. **Deny and close.** Through that same interface, request `calendar:edit`, repeat with a withdrawn view grant, and run a separate case with the current grant authority unavailable. The destination denies or blocks each action. Compare resource state and response before and after each attempt. A cached view or prior successful request supplies no authority for a new protected disclosure or effect. Close in-scope temporary sessions and credentials, clear authorized transient buffers, and apply the pending-effect contract. Run crossing cleanup again and verify the same terminal state. Preserve authorized audit evidence and unrelated workloads.
+3. **Remove and report the affected route.** The application operator stops the viewer and invalidates its runtime identity. Retry with that identity and an otherwise still-cached calendar endpoint binding. The destination must deny the protected action without disclosure or a committed effect. The viewer consumes the calendar binding and has no published endpoint in this fixture. An independently authorized control client must still discover and read the calendar service under its own grant. In a separate case, the lab steward disconnects the quantum adapter and verifies that its dependent capability reports blocked or degraded while an ordinary device still reaches a public HTTPS destination. Report the actual route, active or degraded mode, and failing dependency. Show a fallback or simulation only if it is an explicitly declared route, and label its mode. A component process or stale health result supplies no readiness verdict for the affected route.
+4. **Rematerialize on a clean host.** Use the one-service restore in [Routine Restore and Authority Recovery](#routine-restore-and-authority-recovery). The authorized steward restores verified data onto a clean replacement, verifies ingress and applicable shared-write fences, obtains fresh serving credentials, and reconciles current authorization, publication, and credential authority. Publish a higher-revision binding for the same logical service. The independent peer verifies the binding and retrieves the permitted record under its existing trust and policy. A fence or current authority that cannot be verified keeps the protected route blocked. A withdrawn grant stays denied after restore. Any optional CleanHouse baseline describes only its declared host, scope, provenance, and observations.
+
+- ▣ **Crossing and cleanup receipt** · Record authority by fact class, source and destination identities, declared interface, actual discovery and request paths, current policy decision, permitted response fields, and the state and disclosure observations for each negative case. Record scoped cleanup twice and verify the independent workload and retained evidence separately.
+- ▣ **Removal and readiness receipt** · Record what was removed, which bindings and credentials became unusable, the dependency and status shown, and fresh probes from the affected and unrelated paths. **PASS** requires truthful dependent readiness and continued operation on the independently declared control paths. Missing observations leave the affected criterion **UNVERIFIED**. Use the lab’s own lifecycle evidence for any claim about physical memory or allocation release.
+- ▣ **Clean-host rematerialization receipt** · Link the authorized restore and fence receipts. Record the clean target, verified backup and current authorities, fresh credential, binding revision, unchanged peer trust and policy, restored response, and denial under the withdrawn grant. A green local check alone leaves independent service readiness **UNVERIFIED**.
+
+*Source anchors · Commonwealth, [Scoped cross-container grant](#scoped-cross-container-grant), [Crossing cleanup and independent physical state](#crossing-cleanup-and-independent-physical-state), [Application Publication and Isolated Execution](#application-publication-and-isolated-execution), and [Routine Restore and Authority Recovery](#routine-restore-and-authority-recovery). LIFE Containerism, Master Doctrine, “Operational Laws” and “Required Governance Interfaces”; Deployment and Readiness Doctrine; Shared Auth and VVAULT Infrastructure, “Crossing Rules.” Protocol reference for resource-level access decisions · [NIST SP 800-207, Zero Trust Architecture](https://doi.org/10.6028/NIST.SP.800-207).*
+
 ## Network Services and Orchestration
 
 ### LIFE flagship reference lab and Commonwealth Kit
@@ -661,6 +688,35 @@ Reviewer -- outcome reference --> authorized underlying observation
 
 *Source anchors · Commonwealth ISP, “The Proposed Architecture” and “Toward a Quantum Internet.” Arbiter, distributed trust and conditional consensus. Engineer, ledger scope. [Transparency log reference, RFC 9162](https://www.rfc-editor.org/rfc/rfc9162.html).*
 
+#### Shared reservation ordering · Bilateral signatures, witnessed history, and blockchain
+
+**Proposed comparison fixture.** Operators A and B each have authority to submit a reservation for the same exclusive cross-lab slot `S`. They submit `A1` and `B1` concurrently against the same available slot version. Each request would be valid if submitted alone. The question is who can turn either request into the one authoritative allocation of `S`. In all three cases, each lab still independently approves and enforces its own expiring apparatus lease. The shared reservation conveys no apparatus authority.
+
+```text
+A -- signed allocate(S, expected_version, A1) --> chosen decision mechanism
+B -- signed allocate(S, expected_version, B1) --> chosen decision mechanism
+
+Expected authoritative result, when an allocation can be decided
+  exactly one current allocation for S
+  competing request rejected as a conflict or declined without an allocation
+```
+
+| Candidate mechanism | Work the same two requests | Decision and failure boundary |
+|---|---|---|
+| **Bilateral signatures** | If a designated slot owner already has authority to decide, route both signed requests there. The owner serializes the decisions against its current slot state and signs each disposition. The requester verifies the signer and binds the response to the original request and slot version. | One accepted allocation and one conflict are expected from the slot owner. If the owner is unreachable, the caller has no new authoritative allocation. Test alteration, stale version, and two contradictory signed approvals. Signatures identify who signed each approval. Resolving contradictory approvals still requires the governing slot authority or agreement. [COSE signatures, RFC 9052 §4](https://www.rfc-editor.org/rfc/rfc9052.html#section-4) |
+| **Witnessed append-only history** | The same slot authority records both decisions and publishes a checkpoint covering them. A witness retains the checkpoint. The reviewer checks inclusion and append-only consistency against retained checkpoints. | The log makes the decision history inspectable. Its admission and ordering authority still belongs to the log operator. Exercise inconsistent views, a missing inclusion proof for a claimed recorded decision, and an unavailable witness. A missing proof leaves the coverage claim **UNVERIFIED**. Detection of conflicting histories requires a witness or reviewer to obtain and compare the relevant views. [Merkle audit and consistency proofs, RFC 9162 §§2.1.3–2.1.4](https://www.rfc-editor.org/rfc/rfc9162.html#section-2.1.3) |
+| **Permissioned blockchain or other replicated state machine · Conditional** | Evaluate this option if no single slot owner may resolve the conflict and the operators require a common authoritative decision across independently administered replicas. Authorized writers submit `A1` and `B1` to the same slot state. Validators order and apply the version-checked transition under the chosen quorum and finality rules. | Under the declared fault assumptions, at most one request can finalize as the allocation. Its competitor cannot allocate the same slot version. Under partition, a side that lacks the required quorum cannot report a final allocation. On recovery, verify convergence on the finalized state and reconcile pending requests. A model without an agreed fault bound, quorum, and finality rule leaves this gate **UNVERIFIED**. [Castro and Liskov, Practical Byzantine Fault Tolerance, §§2–4](https://static.usenix.org/publications/library/proceedings/osdi99/full_papers/castro/castro_html/castro.html) |
+
+◆ **Selection gate** · Keep the owner-signed model when one accountable authority can decide the slot. Add witnessing when independent review of the decision history is required. Evaluate consensus when conflicting authorized writes need one common order and no single owner is authorized to impose it. Before selecting a permissioned chain, approve writers, validator ownership and membership changes, fault assumptions, quorum, finality, partition and recovery rules, privacy, and operating costs. Household grants, protected contents, and raw instrument data stay with their owning authorities.
+
+→ **Authorized correction or release** · The authorized slot owner or shared-governance principal submits a new signed transition referencing the allocation and current version, stating the permitted correction or release and its reason. Apply the chosen mechanism’s authority and finality rules before changing the active slot. Retain the prior decision in the audit history. Reject an unauthorized or stale correction without changing the active slot. Any affected lab separately reconciles its local reservation and apparatus state.
+
+- ▣ **Competing-write receipt** · Record `S`, starting version, both writer authorities and requests, timing and delivery order, each caller-visible disposition, the resulting authoritative allocation, and the evidence linking each response to the resulting state. **FAIL** if both requests obtain authoritative allocation of the same exclusive slot version.
+- ▣ **Witness receipt** · Record signed decisions, retained checkpoints, witness vantage, and inclusion or consistency results. State the exact coverage used to assess a missing decision. Record the underlying allocation separately from the history proof.
+- ▣ **Conditional partition and correction receipt** · Record mechanism version, validator membership, fault and quorum assumptions, partition sides, submitted and pending writes, committed order, finality evidence and delay, and recovered replica state. Exercise a side without quorum, replica rejoin, authorized correction, and unauthorized or stale correction. Observe each lab’s separate lease decision and any release or reconciliation. Finality establishes the shared record. Lab receipts establish apparatus readiness, attempts, and physical outcomes.
+
+*Source anchors · Commonwealth, [Signed Records, Checkpoints, and Shared State](#signed-records-checkpoints-and-shared-state) and [Physical Quantum Workflow](#physical-quantum-workflow). Arbiter, conditional shared ordering and independent lab leases. Technology background · [NISTIR 8202, Blockchain Technology Overview](https://www.nist.gov/publications/blockchain-technology-overview).*
+
 ### Support, Incidents, and Operational Changes
 
 **Proposed support interaction**
@@ -834,6 +890,32 @@ model + scheduler + inputs + randomness record
 - ▣ **Replay receipt** · Record independent evaluator, artifact and configuration references, comparison rule, observed differences, invariant result, and retained simulation labels. Scope the verdict to the model and fixtures recorded.
 
 *Source anchors · Commonwealth ISP, “Toward a Quantum Internet” and “Development and Verification.” Arbiter, simulated quantum proof. QC and Clean, replay and export.*
+
+#### Superposition · Complementary-basis fixture and physical evidence
+
+**Proposed worked simulation.** The experiment operator loads a versioned one-qubit fixture and runs three preparations. Prepare \(|\psi_\phi\rangle=(|0\rangle+e^{i\phi}|1\rangle)/\sqrt2\) with phase \(0\) and with phase \(\pi\). For the comparison, prepare an incoherent ensemble that chooses \(|0\rangle\) or \(|1\rangle\) with equal probability, or use the equivalent density matrix. Use a fresh preparation for each trial and basis. The coherent preparations have the same Z-basis probabilities and different relative phases. Those phases change the interference measured in X. The mixture has no coherence between the Z-basis alternatives. [Watrous, single-system quantum information and measurements](https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/single-systems/quantum-information) · [Watrous, probabilistic mixtures](https://quantum.cloud.ibm.com/learning/en/courses/general-formulation-of-quantum-information/density-matrices/convex-combinations)
+
+| Preparation | Ideal Z distribution | Ideal X distribution |
+|---|---|---|
+| \(|+\rangle\), phase \(0\) | 50% `0`, 50% `1` | 100% `+` |
+| \(|-\rangle\), phase \(\pi\) | 50% `0`, 50% `1` | 100% `−` |
+| Incoherent 50/50 mixture of \(|0\rangle\) and \(|1\rangle\) | 50% `0`, 50% `1` | 50% `+`, 50% `−` |
+
+```text
+Operator -- preparation, phase, basis, fresh trials --> versioned simulator
+Simulator -- modeled counts and outcome labels --> comparison with ideal distributions
+Independent evaluator -- configuration, randomness record, comparison rule --> replay
+```
+
+→ **Decision and failure** · The operator selects sample counts and an approved comparison rule before running. The simulator rejects an unsupported preparation or basis before allocating the run. If all three Z distributions agree within the comparison rule, the Z-only result leaves the coherence claim **UNVERIFIED**. Score X separately. If valid measured simulation outputs violate the approved X comparison, record **FAIL** and retain the preparation and basis trace. A missing phase setting, basis label, or fresh-preparation record leaves the affected criterion **UNVERIFIED**. The table gives ideal probabilities. Sampled counts carry finite-sample variation.
+
+◆ **Entanglement and path are separate claims.** Two independent \(|+\rangle\) preparations form a product state. A separate two-qubit control may compare \(|\Phi^+\rangle=(|00\rangle+|11\rangle)/\sqrt2\) with an equal incoherent mixture of \(|00\rangle\) and \(|11\rangle\). Both give perfect same-outcome Z correlations in the ideal model. The Bell state also gives perfect same-outcome X correlations, while the mixture gives no X correlation. A physical entanglement verdict requires its own declared observable, uncertainty, and criterion. For path encoding, a photonic qubit can use two optical modes or early and late time bins as its alternatives. Coherent recombination can reveal their relative phase. Classical multipath observations measure packet delivery. A quantum network path identifies the physical channel or sequence of entanglement links used for the operation. [RFC 9340, Architectural Principles for a Quantum Internet](https://www.rfc-editor.org/rfc/rfc9340.html) · [Knaut et al., photonic time-bin encoding and Bell-state measurements](https://arxiv.org/html/2310.01316) · [Pompili et al., experimental quantum network stack](https://www.nature.com/articles/s41534-022-00631-2)
+
+- ▣ **Software receipt** · Record model and software versions, preparation and phase, measurement basis, trial count, scheduler and event ordering, randomness implementation and seed where applicable, expected distributions, modeled outcomes by basis, approved comparison rule, and independent replay. Keep simulation labels on export. Score the one-qubit coherence fixture separately from any two-qubit control.
+- ▣ **Physical coherence receipt** · For a separately authorized apparatus run, a lab predeclares the phase-controlled preparation and complementary measurement, calibration, trial and rejection rules, counts by basis, analysis, and uncertainty. A Ramsey-style analysis can convert relative phase into measurable population differences. Require the complementary-basis evidence to meet the declared physical criterion. A link or entanglement claim additionally needs endpoint and channel identity, correlated trial and herald records, and the approved joint measurement analysis. Record usable-pair rate when claimed. [Biercuk et al., physical phase-controlled interference](https://tf.boulder.nist.gov/general/pdf/2368.pdf) · [Pompili et al., experimental quantum network stack, Figs. 2–4](https://www.nature.com/articles/s41534-022-00631-2)
+- ▣ **Memory, lease, and crossing-cleanup receipts** · The boundary owner verifies classical cleanup for transient sessions, credentials, buffers, and pending effects in scope. Each lab separately records its local lease and apparatus lifecycle, including any measured hold, consumption, expiry, or reset. A memory-retention claim requires a declared hold interval, the physical controls required throughout that interval, and calibrated readout or equivalent direct evidence under the declared analysis. If a required control is lost, record the fault and follow local stop, release, or reconciliation rules. Do not infer continued pair retention from a herald, a lease record, or completed classical cleanup. Without qualifying physical evidence, retention is **UNVERIFIED**.
+
+*Source anchors · Commonwealth, [Simulated Quantum Workflow](#simulated-quantum-workflow), [Physical Quantum Workflow](#physical-quantum-workflow), and [Crossing cleanup and independent physical state](#crossing-cleanup-and-independent-physical-state). The comparison fixture and any physical coherence criterion remain proposed.*
 
 ### Physical Quantum Workflow
 
