@@ -1,6 +1,11 @@
 name: Commonwealth cloud simulation
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - step-3-cloud-simulation
+    paths:
+      - .github/workflows/cloud-simulation.yml
 permissions:
   contents: read
 jobs:
