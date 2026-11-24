@@ -1,0 +1,445 @@
+{
+  "step-3": {
+    "access": [
+      {
+        "tick": 0,
+        "criterion": "denied before admission",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "admitted credential",
+        "input": {
+          "action": "attach",
+          "session": "guest-session-01",
+          "credential": "guest-01"
+        },
+        "expected": {
+          "allowed": true
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "denied before provisioning",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "lease, gateway and resolver",
+        "input": {
+          "action": "provision",
+          "session": "guest-session-01"
+        },
+        "expected": {
+          "lease": "192.0.2.10/24",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.53"
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "resolve www.public.test",
+        "input": {
+          "action": "resolve",
+          "session": "guest-session-01",
+          "name": "www.public.test"
+        },
+        "expected": {
+          "source": "resolver",
+          "address": "203.0.113.10",
+          "expiry": 4
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "modeled public forwarding after provisioning",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": true,
+          "translated_source": "198.51.100.10"
+        }
+      }
+    ],
+    "dns": [
+      {
+        "tick": 0,
+        "criterion": "admitted credential",
+        "input": {
+          "action": "attach",
+          "session": "guest-session-01",
+          "credential": "guest-01"
+        },
+        "expected": {
+          "allowed": true
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "lease, gateway and resolver",
+        "input": {
+          "action": "provision",
+          "session": "guest-session-01"
+        },
+        "expected": {
+          "lease": "192.0.2.10/24",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.53"
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "resolve www.public.test",
+        "input": {
+          "action": "resolve",
+          "session": "guest-session-01",
+          "name": "www.public.test"
+        },
+        "expected": {
+          "source": "resolver",
+          "address": "203.0.113.10",
+          "expiry": 4
+        }
+      },
+      {
+        "tick": 2,
+        "criterion": "resolver fault",
+        "input": {
+          "action": "resolver_offline"
+        },
+        "expected": {
+          "online": false
+        }
+      },
+      {
+        "tick": 3,
+        "criterion": "resolve www.public.test",
+        "input": {
+          "action": "resolve",
+          "session": "guest-session-01",
+          "name": "www.public.test"
+        },
+        "expected": {
+          "source": "cache",
+          "address": "203.0.113.10",
+          "expiry": 4
+        }
+      },
+      {
+        "tick": 3,
+        "criterion": "resolve fresh.public.test",
+        "input": {
+          "action": "resolve",
+          "session": "guest-session-01",
+          "name": "fresh.public.test"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 4,
+        "criterion": "resolve www.public.test",
+        "input": {
+          "action": "resolve",
+          "session": "guest-session-01",
+          "name": "www.public.test"
+        },
+        "expected": {
+          "allowed": false
+        }
+      }
+    ],
+    "isolation": [
+      {
+        "tick": 0,
+        "criterion": "admitted credential",
+        "input": {
+          "action": "attach",
+          "session": "guest-session-01",
+          "credential": "guest-01"
+        },
+        "expected": {
+          "allowed": true
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "lease, gateway and resolver",
+        "input": {
+          "action": "provision",
+          "session": "guest-session-01"
+        },
+        "expected": {
+          "lease": "192.0.2.10/24",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.53"
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "guest denied",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "192.0.2.11"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "household denied",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "192.0.2.80"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "management denied",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "192.0.2.90"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "public control",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": true,
+          "translated_source": "198.51.100.10"
+        }
+      }
+    ],
+    "withdrawal": [
+      {
+        "tick": 0,
+        "criterion": "admitted credential",
+        "input": {
+          "action": "attach",
+          "session": "guest-session-01",
+          "credential": "guest-01"
+        },
+        "expected": {
+          "allowed": true
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "lease, gateway and resolver",
+        "input": {
+          "action": "provision",
+          "session": "guest-session-01"
+        },
+        "expected": {
+          "lease": "192.0.2.10/24",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.53"
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "admitted credential",
+        "input": {
+          "action": "attach",
+          "session": "guest-session-02",
+          "credential": "guest-02"
+        },
+        "expected": {
+          "allowed": true
+        }
+      },
+      {
+        "tick": 0,
+        "criterion": "lease, gateway and resolver",
+        "input": {
+          "action": "provision",
+          "session": "guest-session-02"
+        },
+        "expected": {
+          "lease": "192.0.2.11/24",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.53"
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "first guest flow",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "public-flow-01",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": true,
+          "translated_source": "198.51.100.10"
+        }
+      },
+      {
+        "tick": 1,
+        "criterion": "independent guest flow",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-02",
+          "flow": "public-flow-02",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": true,
+          "translated_source": "198.51.100.10"
+        }
+      },
+      {
+        "tick": 2,
+        "criterion": "withdraw with failed eviction",
+        "input": {
+          "action": "withdraw",
+          "credential": "guest-01"
+        },
+        "expected": {
+          "withdrawn": "guest-01"
+        }
+      },
+      {
+        "tick": 2,
+        "criterion": "attachment and lease remain with expected flow state",
+        "input": {
+          "action": "observe",
+          "session": "guest-session-01",
+          "flow": "public-flow-01"
+        },
+        "expected": {
+          "attached": true,
+          "lease": "192.0.2.10/24",
+          "flow_active": false
+        }
+      },
+      {
+        "tick": 2,
+        "criterion": "fresh flow denied",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-01",
+          "flow": "fresh-flow",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 2,
+        "criterion": "future attachment denied",
+        "input": {
+          "action": "attach",
+          "session": "guest-session-01",
+          "credential": "guest-01"
+        },
+        "expected": {
+          "allowed": false
+        }
+      },
+      {
+        "tick": 2,
+        "criterion": "attachment and lease remain with expected flow state",
+        "input": {
+          "action": "observe",
+          "session": "guest-session-02",
+          "flow": "public-flow-02"
+        },
+        "expected": {
+          "attached": true,
+          "lease": "192.0.2.11/24",
+          "flow_active": true
+        }
+      },
+      {
+        "tick": 2,
+        "criterion": "independent guest continues",
+        "input": {
+          "action": "forward",
+          "session": "guest-session-02",
+          "flow": "public-flow-02",
+          "destination": "203.0.113.10"
+        },
+        "expected": {
+          "allowed": true,
+          "translated_source": "198.51.100.10"
+        }
+      }
+    ]
+  },
+  "later": {
+    "step-4-bilateral-exchange": {
+      "expected": "Established identity and binding, allowed record.read and destination denial"
+    },
+    "step-5-controls": {
+      "expected": "Complete authorization, isolation and revocation at enforcement points"
+    },
+    "step-6-restore-and-rejoin": {
+      "backup_data_tick": 8,
+      "host_loss": 10,
+      "revocation": 11,
+      "restore": 12,
+      "last_tick": 20,
+      "latest_success": 15,
+      "recovery_time_max": 5,
+      "recovery_age_max": 2,
+      "authorized_restore_count": 1,
+      "b_probe_count": 21,
+      "b_probe_cadence": 1,
+      "trust_policy_changes": 0,
+      "founder_privileged_actions": 0,
+      "expected": "Authorized clean replacement returns expected data under revision 2"
+    },
+    "step-6-revoked-credential": {
+      "expected": "Replacement denies revoked credential with no protected payload"
+    },
+    "step-6-tampered-backup": {
+      "expected": "Integrity rejection; clean target remains empty"
+    },
+    "step-6-unauthorized-rejoin": {
+      "expected": "Reject rejoin; endpoint, revision, binding digest, trust and policy remain unchanged"
+    }
+  }
+}
