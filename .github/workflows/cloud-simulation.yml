@@ -1,0 +1,41 @@
+name: Commonwealth cloud simulation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  step-3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      PYTHONPATH: simulation
+      PYTHONDONTWRITEBYTECODE: "1"
+      CHECKOUT_ACTION_SHA: 11bd71901bbe5b1630ceea73d27597364c9af683
+      UPLOAD_ACTION_SHA: ea165f8d65b6e75b540449e92b4886f43607fa02
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify revision and run smoke
+        run: |
+          mkdir -p "$RUNNER_TEMP/commonwealth"
+          export CHECKOUT_SHA="$(git rev-parse HEAD)"
+          if [[ "$CHECKOUT_SHA" != "$GITHUB_SHA" ]]; then
+            printf 'Expected %s, checked out %s\n' "$GITHUB_SHA" "$CHECKOUT_SHA" > "$RUNNER_TEMP/commonwealth/checkout-error.txt"
+            exit 2
+          fi
+          python3 --version
+          python3 -m commonwealth_sim smoke --topology simulation/fixtures/topology.json --out "$RUNNER_TEMP/commonwealth/smoke.json"
+      - name: Run Step 3
+        run: |
+          export CHECKOUT_SHA="$(git rev-parse HEAD)"
+          python3 -m commonwealth_sim run --topology simulation/fixtures/topology.json --cases simulation/fixtures/cases.json --suite step-3 --out "$RUNNER_TEMP/commonwealth/step-3"
+      - name: Preserve simulation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: commonwealth-step-3
+          path: ${{ runner.temp }}/commonwealth
+          if-no-files-found: error
+          retention-days: 14
