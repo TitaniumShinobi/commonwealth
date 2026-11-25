@@ -12,6 +12,12 @@ permissions:
 jobs:
   step-7:
     outputs:
+      root_pin: ${{ steps.trust_pins.outputs.fingerprint }}
+      verifier_pin: ${{ steps.trust_pins.outputs.verify_sha256 }}
+      consumer_pin: ${{ steps.trust_pins.outputs.consumer_sha256 }}
+      trust_pin: ${{ steps.trust_pins.outputs.trust_sha256 }}
+      source_pin: ${{ steps.trust_pins.outputs.source_revision }}
+      kit_pin: ${{ steps.trust_pins.outputs.version }}
       bootstrap_id: ${{ steps.kit_boot.outputs.artifact-id }}
       bootstrap_sha: ${{ steps.kit_boot.outputs.artifact-digest }}
       release_id: ${{ steps.kit_release.outputs.artifact-id }}
@@ -205,7 +211,8 @@ jobs:
               if "custody" in json.loads(line):
                   print(line)
           PY
-      - name: Build and sign the fixed test Kit
+      - name: Provision trust pins through the trusted fixture workflow before candidate construction
+        id: trust_pins
         run: |
           python3 - <<'PY'
           import json, os
@@ -216,7 +223,8 @@ jobs:
               if receipt["revision"] != os.environ["GITHUB_SHA"] or receipt["verdict"] != "PASS":
                   raise SystemExit("Step 7 cloud preparation must pass before Kit production")
           PY
-          python3 kit/build.py "$RUNNER_TEMP/commonwealth-kit"
+          umask 077
+          python3 kit/trusted_fixture.py provision "$RUNNER_TEMP/commonwealth-kit"
       - name: Publish separate trusted fixture inputs
         id: kit_boot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -225,6 +233,28 @@ jobs:
           path: ${{ runner.temp }}/commonwealth-kit/bootstrap
           retention-days: 14
           if-no-files-found: error
+      - name: Build unsigned candidates under an unprivileged identity
+        run: |
+          work="$(mktemp -d)"
+          trap 'sudo -n rm -rf -- "$work"' EXIT
+          chmod 755 "$work"
+          mkdir "$work/source"
+          cp kit/build.py kit/verify_kit.py "$work/source/"
+          cp -R kit/package "$work/source/"
+          chmod -R a+rX "$work/source"
+          sudo -n install -d -m 700 -o nobody "$work/unsigned"
+          sudo -n runuser -u nobody -- test ! -r "$RUNNER_TEMP/commonwealth-kit/private/release.key"
+          sudo -n runuser -u nobody -- test ! -w "$RUNNER_TEMP/commonwealth-kit/bootstrap"
+          sudo -n unshare --net runuser -u nobody -- env -i PATH=/usr/bin:/bin \
+            GITHUB_SHA="$GITHUB_SHA" PYTHONDONTWRITEBYTECODE=1 \
+            python3 "$work/source/build.py" "$work/unsigned"
+          sudo -n sh -c 'cp -R -- "$1" "$2" && chown -R -- "$3" "$2"' sh \
+            "$work/unsigned" "$RUNNER_TEMP/commonwealth-kit/unsigned" "$USER"
+          echo "unsigned builder: nobody; private key unreadable; trusted bootstrap unwritable"
+      - name: Sign approved coordinates with the trusted fixture key
+        run: |
+          umask 077
+          python3 kit/trusted_fixture.py sign "$RUNNER_TEMP/commonwealth-kit" "$RUNNER_TEMP/commonwealth-kit/unsigned"
       - name: Publish candidate and negative releases
         id: kit_release
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -242,6 +272,12 @@ jobs:
       - name: Provision trusted inputs first, then obtain the candidate
         env:
           GH_TOKEN: ${{ github.token }}
+          ROOT_PIN: ${{ needs.step-7.outputs.root_pin }}
+          VERIFIER_PIN: ${{ needs.step-7.outputs.verifier_pin }}
+          CONSUMER_PIN: ${{ needs.step-7.outputs.consumer_pin }}
+          TRUST_PIN: ${{ needs.step-7.outputs.trust_pin }}
+          SOURCE_PIN: ${{ needs.step-7.outputs.source_pin }}
+          KIT_PIN: ${{ needs.step-7.outputs.kit_pin }}
           BOOT_ID: ${{ needs.step-7.outputs.bootstrap_id }}
           BOOT_SHA: ${{ needs.step-7.outputs.bootstrap_sha }}
           RELEASE_ID: ${{ needs.step-7.outputs.release_id }}
@@ -274,6 +310,29 @@ jobs:
             echo "$role artifact $id SHA-256 $digest verified"
           }
           download "$BOOT_ID" "$BOOT_SHA" bootstrap
+          python3 - "$root/bootstrap" "$root/trust-check.json" <<'PY'
+          import hashlib, json, os, subprocess, sys
+          from pathlib import Path
+          directory = Path(sys.argv[1])
+          def sha(data):
+              return hashlib.sha256(data).hexdigest()
+          record = (directory / "trust.json").read_bytes()
+          pins = {"fingerprint": os.environ["ROOT_PIN"], "source_revision": os.environ["SOURCE_PIN"],
+                  "version": os.environ["KIT_PIN"], "verify_sha256": os.environ["VERIFIER_PIN"],
+                  "consumer_sha256": os.environ["CONSUMER_PIN"]}
+          der = subprocess.check_output(["openssl", "pkey", "-pubin", "-in",
+                                         str(directory / "release-root.pem"), "-outform", "DER"])
+          actual = {"fingerprint": sha(der), "verify_sha256": sha((directory / "verify_kit.py").read_bytes()),
+                    "consumer_sha256": sha((directory / "consume.py").read_bytes()),
+                    "source_revision": os.environ["GITHUB_SHA"], "version": "0.1.0-test.1"}
+          if (pins != actual or sha(record) != os.environ["TRUST_PIN"]
+              or any(json.loads(record).get(k) != v for k, v in pins.items())):
+              raise SystemExit("bootstrap does not match trusted orchestration pins")
+          decision = {"decision": "verified_trusted_orchestration_pins_before_candidate_delivery",
+                      "pins": pins, "trust_record_sha256": sha(record)}
+          Path(sys.argv[2]).write_text(json.dumps(decision))
+          print(json.dumps(decision))
+          PY
           download "$RELEASE_ID" "$RELEASE_SHA" release
           python3 - "$root/staged.json" <<'PY'
           import json, os, sys
@@ -316,7 +375,8 @@ jobs:
               print(json.dumps({"check_offset": i, "checks": data["checks"][i:i+5]}, separators=(",", ":")))
           print(json.dumps({k: data[k] for k in ("revision", "verdict", "incomplete", "installation", "trust")},
                            separators=(",", ":")))
-          proof = {"receipt_sha256": hashlib.sha256(raw).hexdigest(), "staged": json.loads((root / "staged.json").read_text())}
+          proof = {"receipt_sha256": hashlib.sha256(raw).hexdigest(), "staged": json.loads((root / "staged.json").read_text()),
+                   "trusted_inputs": json.loads((root / "trust-check.json").read_text())}
           print(json.dumps(proof, separators=(",", ":")))
           (p.parent / "custody.json").write_text(json.dumps(proof))
           PY

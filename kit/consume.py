@@ -333,7 +333,22 @@ def runtime(target, work):
                   [record["decision"], record["allocations"], record["trace"][0]["result"],
                    record["trace"][-1]["allocations"],
                    all(event["scope"] == "Simulation" for event in record["trace"])])
+        check("lab_timeout_waits_until_declared_deadline", [1, 2, 3, 4, 5],
+              [event["tick"] for event in timeout["trace"] if event["event"] == "attempt"])
+        check("lab_timeout_pending_before_deadline", ["confirmation_pending"] * 4 + ["confirmation_timeout"],
+              [event["result"] for event in timeout["trace"] if event["event"] == "attempt"])
+        check("lab_timeout_terminal_tick_matches_deadline", [5, 5],
+              [timeout["deadline"], timeout["terminal_tick"]])
+        check("lab_herald_waits_for_b", [1, 2, "confirmation_pending", "modeled_herald"],
+              [event["tick"] for event in herald["trace"] if event["event"] == "attempt"] +
+              [event["result"] for event in herald["trace"] if event["event"] == "attempt"])
+        for label, record in (("herald", herald), ("timeout", timeout)):
+            for endpoint in ("lab-a", "lab-b"):
+                check(f"{label}_{endpoint}_allocation_readback", [True, None, None],
+                      [record["pre_release"][endpoint] is not None, record["post_release"][endpoint],
+                       record["trace"][-1]["independently_read_back"][endpoint]])
         check("lab_semantic_replay", herald, repeated)
+        check("lab_timeout_semantic_replay", timeout, lab_run("confirm-timeout"))
         unsupported = work / "unsupported-lab.json"
         write(unsupported, {**load(lab), "adapter": "unknown"})
         bad = command(binary, "lab", "check", "--config", unsupported)
