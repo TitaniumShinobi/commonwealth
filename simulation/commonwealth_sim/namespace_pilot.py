@@ -124,10 +124,11 @@ def firewall(guest, wan, deny, close=False):
     rules = "" if close else (f'iifname "{guest}" oifname "{wan}" counter accept\n'
                                f'iifname "{wan}" oifname "{guest}" ct state established,related counter accept\n')
     return (f"table inet cw {{ chain forward {{ type filter hook forward priority filter; policy drop;\n"
-            f"{guard}{rules} }} "
+
+            f"{guard}{rules} }}\n"
             'chain input { type filter hook input priority filter; policy drop; ' 
             f'iifname "lo" accept; iifname "cwm0" accept; iifname "{guest}" udp dport {{ 53, 67 }} accept; '
-            f'iifname "{guest}" tcp dport 53 accept; }} }}\n'
+            f'iifname "{guest}" tcp dport 53 accept; }}\n}}\n'
             f'table ip cwnat {{ chain post {{ type nat hook postrouting priority srcnat; policy accept; '
             f'oifname "{wan}" ip saddr 192.0.2.0/24 masquerade; }} }}\n')
 
@@ -156,12 +157,12 @@ def exercise(profile, config):
         interfaces = profile["interfaces"]
         guest, wan = interfaces["guest"], interfaces["wan"]
         for index, (left, right, left_if, right_if) in enumerate((
-            ("g", "l", guest, "up"), ("l", "a", "p1", "eth0"), ("l", "b", "p2", "eth0"),
+            ("g", "l", guest, "uplink0"), ("l", "a", "p1", "eth0"), ("l", "b", "p2", "eth0"),
             ("g", "w", wan, "eth0"), ("g", "h", interfaces["household"], "eth0"),
             ("g", "m", interfaces["management"], "eth0"), ("g", "s", interfaces["service"], "eth0"))):
             f.wire(left, right, index, left_if, right_if)
         f.run("ip", "link", "add", "br0", "type", "bridge", namespace="l")
-        for port in ("up", "p1", "p2"):
+        for port in ("uplink0", "p1", "p2"):
             f.run("ip", "link", "set", port, "master", "br0", namespace="l")
         f.run("ip", "link", "set", "br0", "up", namespace="l")
         for role, interface, ip in (
@@ -208,9 +209,12 @@ def exercise(profile, config):
         denied = firewall(guest, wan, ("192.0.2.10",))
         replace = "delete table inet cw\ndelete table ip cwnat\n"
         digests["withdrawal"] = f.program("g", replace + denied)
-        f.program("l", "delete table bridge cwlan\n" + bridge(True))
         f.check("existing_tcp_stops_without_eviction", "blocked", f.line(client, send=True))
         f.check("new_flow_stops_without_eviction", False, f.ping("a", "203.0.113.2"))
+        f.check("routed_deny_counters", True, "192.0.2.10 counter packets" in
+                f.run("nft", "list", "chain", "inet", "cw", "forward", namespace="g").stdout)
+        f.program("l", "delete table bridge cwlan\n" + bridge(True))
+        f.check("withdrawn_bridge_port_blocks_local_path", False, f.ping("a", "192.0.2.1"))
         f.check("unaffected_control", True, f.ping("b", "203.0.113.2"))
         f.run("ip", "link", "set", wan, "down", namespace="g")
         f.check("wan_loss", False, f.ping("b", "203.0.113.2"))
