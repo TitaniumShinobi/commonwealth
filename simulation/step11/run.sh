@@ -14,6 +14,8 @@ printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:2\n' > "$work/resolv.co
 mount --bind "$work/resolv.conf" /etc/resolv.conf
 cd "$work"
 export HOME="$work/home"
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/dev/null
 mkdir -p "$HOME/.pki/nssdb"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout ca.key -out ca.pem \
   -subj '/CN=Commonwealth Step 11 Fixture CA' -addext 'basicConstraints=critical,CA:TRUE' \

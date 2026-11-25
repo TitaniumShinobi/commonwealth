@@ -88,7 +88,9 @@ def trial(run, trial_id, label, mode):
                         "bell_measurement_weights": measured["weights"],
                         "probabilities": {axis: probability(slot, axis) for axis in BASES}})
     observed = {axis: sum(o["probabilities"][axis] for o in outputs) / len(outputs) for axis in BASES}
-    expected = {axis: probability(STATES[label], axis) for axis in BASES}
+    expected = dict(zip(BASES, {"0": (0.5, 0.5, 1), "1": (0.5, 0.5, 0),
+                                "+": (1, 0.5, 0.5), "-": (0, 0.5, 0.5),
+                                "+i": (0.5, 1, 0.5), "-i": (0.5, 0, 0.5)}[label]))
     if mode == "dephasing":
         expected.update(X=0.5, Y=0.5)
     if observed != expected:

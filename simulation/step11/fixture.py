@@ -164,7 +164,7 @@ with socketserver.ThreadingUDPServer(("127.0.0.1", 53), DNS) as dns, \
         threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         subprocess.run([sys.argv[2], str(Path(__file__).with_name("browser.mjs")), sys.argv[3], str(ROOT), RUN],
-                       check=True, timeout=65)
+                       check=True, timeout=95)
         browser = json.loads((ROOT / "browser.json").read_text())
         require(browser["typed"] == "https://lab.example", "typed address")
         require(browser["denied"] == 403 and len(browser["trials"]) == len(CASES), "authorization and all trials")

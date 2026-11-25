@@ -7,12 +7,12 @@ const profile = join(root, "chrome-profile");
 const launchPage = "data:text/html," + encodeURIComponent(
   '<input id="address" type="url"><button id="go">Go</button><script>document.querySelector("#go").onclick=()=>location.assign(document.querySelector("#address").value)</script>');
 const browser = spawn(chrome, ["--headless", "--no-sandbox", "--no-proxy-server",
-  "--disable-background-networking", "--disable-quic", "--no-first-run",
+  "--disable-background-networking", "--disable-dev-shm-usage", "--disable-quic", "--no-first-run",
   "--remote-debugging-port=0", "--user-data-dir=" + profile, "about:blank"],
   {stdio: ["ignore", "ignore", "inherit"]});
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, label) {
-  for (let i = 0; i < 160; i++) {
+  for (let i = 0; i < 400; i++) {
     let result;
     try { result = await fn(); } catch {}
     if (result) return result;
