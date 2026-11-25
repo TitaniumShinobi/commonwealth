@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - step-9-independent-setup
+      - step-11-simulated-quantum
     paths:
       - .github/workflows/cloud-simulation.yml
       - kit/package/STEP9.md
+      - simulation/step11/**
 permissions:
   contents: read
   actions: read
@@ -551,3 +553,49 @@ jobs:
           print(f"::error::Step 9 {verdict or 'UNVERIFIED'}")
           raise SystemExit(1 if verdict == "FAIL" else 2)
           PY
+
+  step-11:
+    if: github.ref_name == 'step-11-simulated-quantum'
+    needs: step-8-consumer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Stage browser trust tooling
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if ! command -v certutil >/dev/null; then
+            sudo -n apt-get install -y libnss3-tools
+          fi
+          node --version
+          google-chrome --version
+          openssl version
+      - name: Run Step 11 in a loopback-only namespace
+        run: |
+          work="$RUNNER_TEMP/step11"
+          mkdir -m 700 "$work"
+          sudo -n --preserve-env=GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_SHA \
+            unshare --mount --propagation private --net -- \
+            bash simulation/step11/run.sh "$work" "$(command -v node)" "$(command -v google-chrome)"
+      - name: Expose bounded Step 11 evidence
+        if: always()
+        run: |
+          root="$RUNNER_TEMP/step11"
+          if [[ -f "$root/trace.ndjson" ]]; then
+            wc -c "$root/trace.ndjson"
+            test "$(stat -c %s "$root/trace.ndjson")" -le 262144
+            cat "$root/trace.ndjson"
+          fi
+      - name: Preserve Step 11 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: commonwealth-step-11
+          path: |
+            ${{ runner.temp }}/step11/trace.ndjson
+            ${{ runner.temp }}/step11/browser.json
+          if-no-files-found: error
+          retention-days: 14
