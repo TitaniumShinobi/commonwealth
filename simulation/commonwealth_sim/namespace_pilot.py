@@ -138,7 +138,7 @@ def bridge(deny=False):
     ports = ('iifname "p1" counter drop\noifname "p1" counter drop\n' if deny else "")
     return ('table bridge cwlan { chain forward { type filter hook forward priority filter; '
             f'policy accept;\n{ports}iifname "p1" oifname "p2" counter drop\n'
-            'iifname "p2" oifname "p1" counter drop\n} }\n')
+            'iifname "p2" oifname "p1" counter drop\n}\n}\n')
 
 
 def exercise(profile, config):
