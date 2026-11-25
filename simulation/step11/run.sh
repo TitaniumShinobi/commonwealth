@@ -32,3 +32,5 @@ certutil -N --empty-password -d "sql:$HOME/.pki/nssdb"
 certutil -A -d "sql:$HOME/.pki/nssdb" -t 'C,,' -n 'Step 11 fixture root' -i ca.pem
 cd - >/dev/null
 PYTHONDONTWRITEBYTECODE=1 python3 simulation/step11/fixture.py "$work" "$node" "$chrome"
+
+PYTHONDONTWRITEBYTECODE=1 python3 simulation/step11/replay.py "$work"

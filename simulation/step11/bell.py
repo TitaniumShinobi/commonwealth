@@ -35,19 +35,59 @@ def sender(label, phase, draw):
                              for c in branches[selected]]}
 
 
-def worker(role, payload):
-    if role == "A":
-        return sender(payload["state"], payload["phase"], payload["draw"])
-    if set(payload) != {"bits"} or len(payload["bits"]) != 2 or any(type(b) is not int or b not in (0, 1) for b in payload["bits"]):
-        raise ValueError("recipient_requires_two_bits")
-    z, x = payload["bits"]
-    return {"gates": ["X"] * x + ["Z"] * z}
+class Endpoint:
+    def __init__(self, role):
+        self.role = role
+        self.process = subprocess.Popen([sys.executable, __file__, role], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, text=True)
+        self.events = []
+
+    def call(self, action, **fields):
+        print(json.dumps({"action": action, **fields}), file=self.process.stdin, flush=True)
+        answer = json.loads(self.process.stdout.readline())
+        self.events.append({"action": action, **{k: answer[k] for k in ("owner", "lease", "decision")}})
+        return answer
+
+    def close(self):
+        self.process.stdin.close()
+        self.process.wait(timeout=3)
+        self.process.stdout.close()
 
 
-def endpoint(role, payload):
-    completed = subprocess.run([sys.executable, __file__, role], input=json.dumps(payload),
-                               capture_output=True, text=True, check=True, timeout=3)
-    return json.loads(completed.stdout)
+def worker(role):
+    lease = None
+    slot = None
+    for line in sys.stdin:
+        message = json.loads(line)
+        action = message["action"]
+        result = {}
+        decision = "ok"
+        if action == "reserve" and lease is None:
+            lease = {"owner": role, "trial_id": message["trial_id"], "expires": 5}
+        elif action in ("cancel", "expire", "release") and lease:
+            lease, slot = None, None
+        elif lease and action == "bell_measure" and role == "A":
+            result = sender(message["state"], message["phase"], message["draw"])
+        elif lease and action == "deliver_quantum_slot" and role == "B":
+            slot = [complex(*v) for v in message["slot"]]
+        elif lease and action == "correct_and_measure" and role == "B" and slot is not None:
+            classical = message["classical"]
+            if set(classical) != {"bits"} or len(classical["bits"]) != 2 or any(type(b) is not int or b not in (0, 1) for b in classical["bits"]):
+                raise ValueError("recipient_requires_two_bits")
+            z, x = classical["bits"]
+            if x:
+                slot = slot[::-1]
+            if z:
+                slot = [slot[0], -slot[1]]
+            rng = random.Random(message["seed"])
+            probs = {axis: probability(slot, axis) for axis in BASES}
+            result = {"gates": ["X"] * x + ["Z"] * z, "probabilities": probs,
+                      "counts": {axis: sum(rng.random() < p for _ in range(message["shots"]))
+                                 for axis, p in probs.items()}, "shots": message["shots"]}
+            slot = None
+        else:
+            decision = "denied"
+        print(json.dumps({"owner": role, "lease": lease, "decision": decision, **result}), flush=True)
 
 
 def probability(state, axis):
@@ -63,44 +103,58 @@ def trial(run, trial_id, label, mode):
         return {**result, "terminal": "quantum_link_unavailable", "leases": {},
                 "events": ["reservation_requested", "link_unavailable"]}
     phases = (1, -1) if mode == "dephasing" else (1,)
-    leases = {"A": {"expires": 5}, "B": {"expires": 5}}
-    result["lease_trace"] = [{"tick": 0, "event": "reservation", "owners": sorted(leases)},
-                             {"tick": 1, "event": "herald", "owners": sorted(leases)}]
-    def release(tick):
-        for owner in ("A", "B"):
-            del leases[owner]
-            result["lease_trace"].append({"tick": tick, "event": "release_" + owner,
-                                          "owners": sorted(leases)})
-        return leases
-    result["events"] = ["reserve_A", "reserve_B", "herald", "bell_pair_delivered", "sender_bell_measurement"]
-    outputs = []
-    for phase in phases:
-        measured = endpoint("A", {"state": label, "phase": phase, "draw": rng.random()})
-        slot = [complex(*amplitude) for amplitude in measured["backend_slot"]]
-        if mode == "missing":
-            return {**result, "terminal": "classical_bits_expired", "recipient_messages": [],
-                    "events": result["events"] + ["bits_withheld", "expire", "release_A", "release_B"], "leases": release(5)}
-        recipient = {"bits": measured["bits"]}
-        correction = endpoint("B", recipient)
-        for gate in correction["gates"]:
-            slot = slot[::-1] if gate == "X" else [slot[0], -slot[1]]
-        outputs.append({"recipient_input": recipient, "recipient_correction": correction,
-                        "bell_measurement_weights": measured["weights"],
-                        "probabilities": {axis: probability(slot, axis) for axis in BASES}})
-    observed = {axis: sum(o["probabilities"][axis] for o in outputs) / len(outputs) for axis in BASES}
-    expected = dict(zip(BASES, {"0": (0.5, 0.5, 1), "1": (0.5, 0.5, 0),
-                                "+": (1, 0.5, 0.5), "-": (0, 0.5, 0.5),
-                                "+i": (0.5, 1, 0.5), "-i": (0.5, 0, 0.5)}[label]))
-    if mode == "dephasing":
-        expected.update(X=0.5, Y=0.5)
-    if observed != expected:
-        raise ValueError(f"measurement_mismatch: {label}: {mode}: {observed}")
-    return {**result, "terminal": "measured", "recipient_messages": outputs, "observed": observed,
-            "expected": expected, "sampled_plus_counts": {axis: sum(rng.random() < p for _ in range(64))
-                                                        for axis, p in observed.items()},
-            "shots_per_basis": 64, "leases": release(4),
-            "events": result["events"] + ["classical_bits_delivered", "correct", "measure", "release_A", "release_B"]}
+    endpoints = [Endpoint("A"), Endpoint("B")]
+    alice, bob = endpoints
+    try:
+        for endpoint in endpoints:
+            response = endpoint.call("reserve", trial_id=trial_id)
+            if response["lease"]["owner"] != endpoint.role:
+                raise ValueError("lease_owner_mismatch")
+        result["events"] = ["reserve_A", "reserve_B", "herald", "bell_pair_delivered"]
+        if mode == "cancelled":
+            terminal = "cancelled"
+            release = "cancel"
+        elif mode == "missing":
+            alice.call("bell_measure", state=label, phase=1, draw=rng.random())
+            result["events"] += ["sender_bell_measurement", "bits_withheld", "lease_expired_at_tick_5"]
+            terminal = "classical_bits_expired"
+            release = "expire"
+        else:
+            shots = 64 // len(phases)
+            outputs = []
+            for phase in phases:
+                measured = alice.call("bell_measure", state=label, phase=phase, draw=rng.random())
+                bob.call("deliver_quantum_slot", slot=measured["backend_slot"])
+                classical = {"bits": measured["bits"]}
+                observed = bob.call("correct_and_measure", classical=classical, seed=rng.randrange(2**32), shots=shots)
+                outputs.append({"recipient_classical_input": classical, "gates": observed["gates"],
+                                "bell_measurement_weights": measured["weights"], "probabilities": observed["probabilities"],
+                                "counts": observed["counts"], "shots": shots})
+            combined = {axis: sum(row["probabilities"][axis] for row in outputs) / len(outputs) for axis in BASES}
+            expected = dict(zip(BASES, {"0": (0.5, 0.5, 1), "1": (0.5, 0.5, 0),
+                                        "+": (1, 0.5, 0.5), "-": (0, 0.5, 0.5),
+                                        "+i": (0.5, 1, 0.5), "-i": (0.5, 0, 0.5)}[label]))
+            if mode == "dephasing":
+                expected.update(X=0.5, Y=0.5)
+            counts = {axis: sum(row["counts"][axis] for row in outputs) for axis in BASES}
+            if combined != expected or any(abs(counts[axis] - 64 * val) > (0 if val in (0, 1) else 16)
+                                            for axis, val in expected.items()):
+                raise ValueError(f"measurement_mismatch: {label}: {mode}: {combined}, {counts}")
+            result.update(recipient_messages=outputs, observed=combined, expected=expected, sampled_plus_counts=counts,
+                          shots_per_basis=64, threshold={"deterministic_tolerance_shots": 0,
+                                                          "half_probability_tolerance_shots": 16})
+            result["events"] += ["sender_bell_measurement", "classical_bits_delivered", "recipient_corrected_and_measured"]
+            terminal = "measured"
+            release = "release"
+        for endpoint in endpoints:
+            if endpoint.call(release)["lease"] is not None:
+                raise ValueError("lease_not_released")
+        return {**result, "terminal": terminal, "leases": {},
+                "endpoint_receipts": {endpoint.role: endpoint.events for endpoint in endpoints}}
+    finally:
+        for endpoint in endpoints:
+            endpoint.close()
 
 
 if __name__ == "__main__":
-    print(json.dumps(worker(sys.argv[1], json.load(sys.stdin)), separators=(",", ":")))
+    worker(sys.argv[1])

@@ -61,6 +61,8 @@ try {
   }
   await send("Network.enable");
   await send("Network.setCacheDisabled", {cacheDisabled: true});
+  const wrong = await send("Page.navigate", {url: "https://wrong.lab.example/wrong-name-probe"});
+  evidence.wrong_name = {error: wrong.result?.errorText, url: "https://wrong.lab.example/wrong-name-probe"};
   await send("Page.navigate", {url: launchPage});
   await click("#address");
   const destination = "https://lab.example";
@@ -68,11 +70,11 @@ try {
   evidence.typed = await value("document.querySelector('#address').value");
   await click("#go");
   await until(() => value("document.querySelector('h1')?.textContent === 'Simulation'"), "typed navigation failed");
-  evidence.denied = await value("fetch('/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trial:'unauthorized'})}).then(r=>r.status)");
+  evidence.denied = await value("fetch('/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trial:'ideal-0'})}).then(r=>r.status)");
   const session = await send("Network.setCookie", {name: "lab_session",
     value: process.env.CW11_BROWSER_SESSION, url: destination, secure: true, httpOnly: true, sameSite: "Strict"});
   if (!session.result?.success) throw Error("fixture browser authorization could not be provisioned");
-  for (const trial of ["ideal-0","ideal-1","ideal-2","ideal-3","ideal-4","ideal-5","dephasing","missing","unavailable"]) {
+  for (const trial of ["ideal-0","ideal-1","ideal-2","ideal-3","ideal-4","ideal-5","dephasing","missing","cancelled","unavailable"]) {
     const url = destination + "/?trial=" + trial;
     await send("Page.navigate", {url});
     const response = await until(() => responses.find(r => r.url === url && r.status === 200), trial + " network response");
