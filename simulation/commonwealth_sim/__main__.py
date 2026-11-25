@@ -299,6 +299,20 @@ class Case:
         self.check(fixture["end"], "founder_privileged_interventions", {"count": 0},
                    {"count": founder, "sources": sorted(sources), "window": [0, fixture["end"]],
                     "lifecycle": [e for e in self.trace if "lifecycle" in e]})
+        negatives = [check for check in self.results if check["expected"].get("disclosed") is False
+                     or check["expected"].get("committed") is False
+                     or check["expected"].get("decision") in
+                     ("rejoin_denied", "integrity_denied", "publication_closed",
+                      "publisher_uncertain", "issuer_uncertain", "binding_rollback_denied")]
+        successes = sum(check["observed"] is not None and (
+                        check["observed"].get("disclosed") is True
+                        or check["observed"].get("committed") is True
+                        or check["observed"].get("decision") in
+                        ("binding_accepted", "restore_admitted", "published", "credential_issued"))
+                        for check in negatives)
+        self.check(fixture["end"], "unauthorized_effects", {"successes": 0},
+                   {"successes": successes, "attempts": len(negatives),
+                    "observed_rejections": sum(check["matches"] for check in negatives)})
         if fixture.get("score_restore"):
             baseline = next((x["observed"] for x in self.results if x["criterion"] == "peer_state"), None)
             ending = next((x["observed"] for x in reversed(self.results)

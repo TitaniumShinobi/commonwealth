@@ -51,6 +51,7 @@ class Recovery:
                           "unrelated": {"live": True, "queued": [], "session": "session:other",
                                         "credential": "token:other", "buffer": None}}
         self.cross_effects = 0
+        self.unrelated_operations = []
         self.audit = []
 
     def sign(self, purpose, value):
@@ -91,7 +92,7 @@ class Recovery:
         if not allowed or sender not in ((allowed,) if isinstance(allowed, str) else allowed):
             result, messages = {"decision": "role_denied"}, []
         else:
-            result, messages = getattr(self, op)(tick, p)
+            result, messages = getattr(self, "accept_binding" if op == "binding" else op)(tick, p)
         if op in PRIVILEGED or sender == "founder":
             self.audit.append({"tick": tick, "sender": sender, "operation": op,
                                "target": self.role, "decision": result["decision"]})
@@ -256,7 +257,7 @@ class Recovery:
             self.emit("publisher", "b", "binding", record=self.sign("publication", data),
                       rejoin=self.sign("rejoin", data))]
 
-    def binding(self, tick, p):
+    def accept_binding(self, tick, p):
         data = p["record"]["data"]
         before = self.binding
         if not self.enrolled or data["service"] != self.policy["allowed_service"]:
@@ -307,7 +308,8 @@ class Recovery:
             return "ingress_fenced" if self.fences["ingress"] > target["generation"] else "service_unavailable"
         if self.uncertain:
             return "authority_uncertain"
-        if target["host"] != self.active or target["credential"] != self.credential:
+        if (target["host"] != self.active or target["credential"] != self.credential
+                or target["generation"] != self.fences["ingress"]):
             return "service_closed"
         if user in self.current["authorization"]["revoked"] or user not in ("b-allowed", "b-revoked-01"):
             return "credential_denied"
@@ -389,7 +391,9 @@ class Recovery:
         if not crossing or not crossing["live"] or crossing["credential"] != p["credential"]:
             return {"decision": "crossing_denied", "disclosed": False, "committed": False,
                     "effects": self.cross_effects}, []
-        if p["id"] != "unrelated":
+        if p["id"] == "unrelated":
+            self.unrelated_operations.append(p["operation"])
+        else:
             self.cross_effects += 1
         return {"decision": "crossing_operated", "effect": p["operation"], "domain": "a-authority"}, []
 
@@ -416,6 +420,7 @@ class Recovery:
         return {"decision": "authority_state", "active": self.active, "fences": dict(self.fences),
                 "readback": dict(self.readback), "writes": self.writes, "restored": self.restored,
                 "uncertain": sorted(self.uncertain), "crossings": self.crossings,
+                "unrelated_operations": list(self.unrelated_operations),
                 "state_digest": digest(self.current)}, []
 
     def audit_state(self, tick, p):

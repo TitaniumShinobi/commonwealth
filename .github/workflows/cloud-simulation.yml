@@ -87,6 +87,11 @@ jobs:
                   continue
               data = json.loads(path.read_text())
               record = {key: data[key] for key in data if key not in ("trace", "diagnostics")}
+              if data.get("incomplete") and data.get("diagnostics"):
+                  for diagnostic in data["diagnostics"]:
+                      if diagnostic.get("stderr"):
+                          print(json.dumps({"receipt": name, "actor": diagnostic["role"],
+                                            "diagnostic": diagnostic["stderr"][-2000:]}))
               if name.startswith(("step-6/", "step-6-replay/")) and "checks" in record:
                   checks = record.pop("checks")
                   for index in range(0, len(checks), 8):
