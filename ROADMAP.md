@@ -50,7 +50,10 @@
    - Prepare the field runbook and rollback. Authorized field pass: a real participant gets a network configuration, resolves names and completes public HTTPS at $0. Score load, isolation, withdrawal, interruption and recovery separately.
    - Keep the target on the roadmap if evidence is missing. Record the unmet gate. Live activation requires explicit authorization.
 
-8. **Start the Commonwealth Kit and LIFE reference node.** [FLAGSHIP LAB]
+8. **Start the Commonwealth Kit and LIFE reference node.** [STEP 8 PASS · CLOUD FIXTURE]
+   - QC and CleanGPT independently passed [`3aa51ef`](https://github.com/TitaniumShinobi/commonwealth/commit/3aa51ef0117591f6803ec0971fef4bcd61768f21). Smoke first, full Steps 3–7 regressions and replay, then 65/65 signed Kit consumer checks. [GitHub Actions run](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45684658070) · [Verified consumer receipts](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45684658070/artifacts/15055463467).
+   - The signed test Kit installed in a clean consumer and exercised service connection, node setup, and the simulated lab adapter. [Kit guide](kit/package/GUIDE.md).
+   - Scope: controlled test signing, authenticated loopback, and simulated lab resources. Production signing, live service, separately administered custody, and physical experiments require separate evidence. UAT outreach has not started.
    - Package a versioned release with a verifiable trust root, client and node, documented commands, simulator, conformance fixtures and lab adapter interface.
    - LIFE operates the reference node, service, sandbox and release channels in the proposed operating model. Disclose LIFE as a reference peer and require local acceptance at enrollment.
    - Offer Connect to a service, Run a node and Connect a lab. Verify the entire software setup path on a clean supported environment.
