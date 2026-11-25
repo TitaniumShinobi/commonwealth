@@ -125,6 +125,120 @@ def exchange(binary, config_path, peer, service, action, request_id, version=1):
                    "--request-id", request_id, "--wire-version", version)
 
 
+def network_lifecycle(binary, root, client, reference, control):
+    owner = Path(load(reference)["authority"])
+    reader = Path(load(client)["authority"])
+    old = root / "fenced-old.json"
+    old_app = root / "old-app.json"
+    write(old_app, {"record": "recoverable-version"})
+    old_config = {**load(reference), "generation": 1, "application": str(old_app),
+                  "audit": str(root / "old-network-audit")}
+    write(old, old_config)
+    replacement = root / "fresh-credentials"
+    operate(binary, replacement, "bootstrap", "--name", "replacement-host")
+    fresh = load(replacement / "node.json")
+    bundle = Path(old_config["ca"])
+    bundle.write_bytes(bundle.read_bytes() + Path(fresh["ca"]).read_bytes())
+    new_app = root / "clean-application.json"
+    new = root / "fenced-new.json"
+    write(new, {**old_config, "generation": 2, "application": str(new_app),
+                "certificate": fresh["certificate"], "tls_key": fresh["tls_key"],
+                "audit": str(root / "new-network-audit")})
+    def identity(config):
+        value = load(config)
+        cert = subprocess.check_output(["openssl", "x509", "-in", value["certificate"], "-outform", "DER"])
+        return {"operator": value["operator"], "service": value["service"], "generation": value["generation"],
+                "certificate": sha(cert), "application": value["application"]}
+    def commit(authority, label, operation, target, body):
+        plan, permit = approval(binary, authority, root, label, operation, target, body)
+        return apply(binary, authority, target, plan, permit)
+    def wire(config, endpoint, fingerprint, identifier, action):
+        code = ("import json,sys;sys.path.insert(0,sys.argv[1]);from runtime import call,read_config;"
+                "print(json.dumps(call(read_config(sys.argv[2]),json.loads(sys.argv[3]),"
+                "json.loads(sys.argv[4]),sys.argv[5])))")
+        message = {"operation": "request", "protocol": 1, "service": "life.reference",
+                   "action": action, "request_id": identifier, "value": "unauthorized-replacement"}
+        return command(sys.executable, "-c", code, binary.parent.parent / "lib", config, json.dumps(endpoint),
+                       json.dumps(message), fingerprint)
+    def network_card(config, ready, label, revision):
+        path = card(root, label, load(config), ready)
+        return {**approved_card(path), "revision": revision}
+    def score(label, expected, observed):
+        check("network_" + label, expected, observed)
+
+    old_id = identity(old)
+    score("activate", "applied", commit(owner, "network-activate", "service-activate", old_app,
+                                        {"identity": old_id})["decision"])
+    listeners = []
+    try:
+        old_ready = root / "old-network-ready"
+        old_process, old_seen = start([binary, "node", "start", "--config", old, "--ready-out", old_ready], old_ready)
+        listeners.append(old_process)
+        client_ready = root / "client-network-ready"
+        client_process, client_seen = start([binary, "node", "start", "--config", client,
+                                             "--ready-out", client_ready], client_ready)
+        listeners.append(client_process)
+        other = network_card(client, client_seen, "network-client", 1)
+        peer = network_card(old, old_seen, "network-old", 1)
+        # The fixture is distinct from the prior reference by source configuration.
+        score("client_enroll", "applied", commit(reader, "network-peer", "enroll", reader, peer)["decision"])
+        score("destination_enroll", "applied", commit(owner, "network-client-peer", "enroll", owner, other)["decision"])
+        def read(label):
+            return exchange(binary, client, old_config["operator"], "life.reference", "fixture.read", label)
+        score("baseline_read", ["recoverable-version", 1],
+              [read("baseline-network").get("result"), read("baseline-revision").get("binding_revision")])
+        score("backup", "applied", commit(owner, "network-backup", "service-backup", old_app,
+                                          {"identity": old_id})["decision"])
+        score("bilateral_exit", ["applied", "applied"], [
+            commit(reader, "network-exit-reader", "exit", reader, {"operator": peer["operator"]})["decision"],
+            commit(owner, "network-exit-owner", "exit", owner, {"operator": other["operator"]})["decision"]])
+        score("client_exit_denial", "peer_not_enrolled", read("post-exit").get("reason"))
+        excluded = wire(client, old_seen["endpoint"], old_id["certificate"], "withdrawn", "fixture.read")
+        score("network_exit_denial", ["destination_policy", None], [excluded["reason"], excluded.get("result")])
+        score("fence", "applied", commit(owner, "network-fence", "service-fence", old_app,
+                                         {"identity": old_id})["decision"])
+        for action in ("fixture.read", "fixture.write"):
+            denied = wire(client, old_seen["endpoint"], old_id["certificate"], action, action)
+            score(action + "_fenced", ["generation_fenced", None, False],
+                  [denied["reason"], denied.get("result"), denied["mutated"]])
+        score("old_data_intact", {"record": "recoverable-version"}, load(old_app))
+        snapshot = operate(binary, owner, "inspect")
+        new_id = identity(new)
+        score("clean_restore", [False, "applied"], [new_app.exists(),
+              commit(owner, "network-restore", "service-restore", new_app,
+                     {"identity": new_id, "backup_sha256": snapshot["service_backup"]["sha256"]})["decision"]])
+        score("fresh_serving_identity", True, old_id["certificate"] != new_id["certificate"])
+        after = operate(binary, owner, "inspect")
+        score("exit_floor_preserved", [snapshot["withdrawn"], snapshot["peer_binding_floors"], 2],
+              [after["withdrawn"], after["peer_binding_floors"], after["binding_floor"]])
+        new_ready = root / "new-network-ready"
+        proc, observed = start([binary, "node", "start", "--config", new, "--ready-out", new_ready], new_ready)
+        listeners.append(proc)
+        score("stale_peer_still_denied", "destination_policy",
+              wire(client, observed["endpoint"], new_id["certificate"], "restore-stale", "fixture.read")["reason"])
+        # Fresh, explicit bilateral approvals are required after withdrawal.
+        score("replacement_enrollment", "applied",
+              commit(reader, "network-new-card", "enroll", reader, network_card(new, observed, "network-new", 2))["decision"])
+        score("renewed_client_approval", "applied",
+              commit(owner, "network-new-client", "enroll", owner, {**other, "revision": 2})["decision"])
+        result = read("network-recovered")
+        score("peer_recovered_read", ["recoverable-version", 2, new_id["certificate"]],
+              [result.get("result"), result.get("binding_revision"), result.get("endpoint_sha256")])
+        for action in ("fixture.read", "fixture.write"):
+            denied = wire(client, old_seen["endpoint"], old_id["certificate"], "restored-" + action, action)
+            score(action + "_old_after_restore", ["generation_fenced", None, False],
+                  [denied["reason"], denied.get("result"), denied["mutated"]])
+        score("old_listener_alive", None, old_process.poll())
+        score("control_peer_continues", "commonwealth-reference-v1",
+              exchange(binary, client, control, "life.reference", "fixture.read", "network-control").get("result"))
+        return {"old": old_id, "new": new_id,
+                "old_audit": Path(old_config["audit"]).read_text().splitlines(),
+                "new_audit": Path(load(new)["audit"]).read_text().splitlines()}
+    finally:
+        for proc in reversed(listeners):
+            stop(proc)
+
+
 def lifecycle(binary, root, targets, boot, chrome, codex):
     scripted, guided, reference, counterpart, ext = [root / name for name in
                    ("scripted", "guided", "life-reference", "local-counterpart", "ext-operator")]
@@ -324,6 +438,14 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         details["extension"] = {"source_sha256": sha(source.read_bytes()), "artifact_sha256": sha(artifact.read_bytes()),
                                 "contract_sha256": sha((extension / "contract.json").read_bytes()),
                                 "published": observed, "audit": Path(load(ext_conf)["audit"]).read_text().splitlines()}
+        dedicated = root / "fenced-service"
+        operate(binary, dedicated, "bootstrap", "--name", "fenced-service")
+        dedicated_config = dedicated / "node.json"
+        separate = load(dedicated_config)
+        bundle.write_bytes(bundle.read_bytes() + Path(separate["ca"]).read_bytes())
+        write(dedicated_config, {**separate, "ca": str(bundle)})
+        details["network_lifecycle"] = network_lifecycle(binary, root, client, dedicated_config,
+                                                           "local-counterpart")
         approved = approved_card(new_card)
         plan, permit = approval(binary, scripted, root, "enroll-check", "enroll", target, approved)
         change = root / "changed-card"

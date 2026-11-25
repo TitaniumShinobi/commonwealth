@@ -481,7 +481,7 @@ jobs:
           print(json.dumps({key: data[key] for key in ("revision", "verdict", "incomplete", "unverified_gates")}))
           for offset in range(0, len(data["checks"]), 8):
               print(json.dumps({"offset": offset, "checks": data["checks"][offset:offset+8]}))
-          for key in ("host", "browser", "extension"):
+          for key in ("host", "browser", "extension", "network_lifecycle"):
               if key in data["detail"]:
                   print(json.dumps({"scope": key, "evidence": data["detail"][key]})[:16000])
           PY

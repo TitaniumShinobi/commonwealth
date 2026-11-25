@@ -16,7 +16,7 @@ VERSION = "0.1.0-test.1"
 ARCHIVE = f"commonwealth-kit-{VERSION}.tar.gz"
 MEMBERS = {"bin/commonwealth", "lib/runtime.py", "lib/simulation_adapter.py", "GUIDE.md",
            "PROTOCOL.md", "ADAPTER.md", "fixtures/conformance.json", "fixtures/simulation.json",
-           "release.json", "STEP9.md", "lib/operator9.py", "lib/bootstrap9.py", "lib/guide9.py",
+           "release.json", "STEP9.md", "lib/operator9.py", "lib/bootstrap9.py", "lib/guide9.py", "lib/network9.py",
            "extension/status_peer.py", "extension/contract.json",
            "plugin/plugin.json", "plugin/skills/commonwealth-help/SKILL.md", "profile.json"}
 M = 1024 * 1024

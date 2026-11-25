@@ -53,7 +53,7 @@ def make_plan(directory, action, target, payload):
     path = Path(target)
     if not path.is_absolute():
         raise Denied("target_must_be_absolute")
-    if action not in ("configure", "enroll", "exit", "upgrade", "rollback", "restore"):
+    if action not in ("configure", "enroll", "exit", "upgrade", "rollback", "restore", "service-activate", "service-backup", "service-fence", "service-restore"):
         raise Denied("unsupported_action")
     return {"actor": "local-operator", "action": action, "target": str(path.resolve()),
             "release_sha256": release(), "payload": payload,
@@ -108,9 +108,18 @@ def mutate(authority, plan):
             raise Denied("configuration_incompatible")
         authority["settings"] = body
     elif action == "enroll":
-        if set(body) != {"operator", "operator_sha256", "publication_sha256",
+        fields = {"operator", "operator_sha256", "publication_sha256",
                          "serving_sha256", "endpoint", "protocol", "workload_sha256",
-                         "operator_public", "publication_public"} or body["protocol"] != 1:
+                         "operator_public", "publication_public"}
+        previous = authority.get("peer_binding_floors", {}).get(body["operator"], 0)
+        revision = body.get("revision", 1)
+        if (set(body) - {"revision"} != fields or body["protocol"] != 1
+                or type(revision) is not int or revision < max(1, previous)):
+            raise Denied("card_incompatible")
+        current = authority["peers"].get(body["operator"])
+        if "revision" in body and current and revision == previous and current != body:
+            raise Denied("binding_revision_conflict")
+        if "revision" in body and body["operator"] in authority["withdrawn"] and revision <= previous:
             raise Denied("card_incompatible")
         address, port = body["endpoint"]
         if address != "127.0.0.1" or type(port) is not int or not 0 < port < 65536:
@@ -118,6 +127,7 @@ def mutate(authority, plan):
         if any(public_fingerprint(body[f"{role}_public"]) != body[f"{role}_sha256"]
                for role in ("operator", "publication")):
             raise Denied("card_public_key_mismatch")
+        authority.setdefault("peer_binding_floors", {})[body["operator"]] = revision
         authority["peers"][body["operator"]] = body
         if body["operator"] in authority["withdrawn"]:
             authority["withdrawn"].remove(body["operator"])
@@ -136,6 +146,9 @@ def mutate(authority, plan):
         if json.loads(raw) != {"protocol": 1, "state_schema": 1}:
             raise Denied("release_incompatible")
         authority["selected_configuration"] = str(selected)
+    elif action.startswith("service-"):
+        from network9 import transition
+        transition(authority, plan)
     elif action == "restore":
         if body.get("ingress_fenced") is not True or body.get("writer_fenced") is not True:
             raise Denied("protected_service_closed")

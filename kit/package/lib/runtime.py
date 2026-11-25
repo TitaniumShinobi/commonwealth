@@ -152,20 +152,36 @@ def listener(config_path, ready_path):
     workload = cert_digest(config["client_certificate"])
 
     class Handler(socketserver.StreamRequestHandler):
+        def discovery(self):
+            delegation = {"operator_sha256": operator, "publication_sha256": publication, "service": service}
+            mismatch = Path(config["audit"]).with_name("wrong-binding")
+            bound_cert = mismatch.read_text() if mismatch.exists() else serving
+            binding = {"operator": config["operator"], "service": service, "protocol": 1,
+                       "endpoint": list(self.server.server_address), "serving_sha256": bound_cert,
+                       "revision": config.get("generation", 1), "expiry": int(time.time()) + 60}
+            result = {"decision": "discovered", "delegation": delegation,
+                      "delegation_signature": sign(config["operator_key"], delegation),
+                      "binding": binding, "binding_signature": sign(config["publication_key"], binding)}
+            return result
+
         def handle(self):
             request = receive(self.rfile)
             peer = sha(self.request.getpeercert(binary_form=True))
             operation = request.get("operation")
+            if "generation" in config and operation in ("discover", "request"):
+                from network9 import dispatch
+                def deliver(response):
+                    if response is None:
+                        response = self.discovery()
+                    if operation == "request":
+                        with Path(config["audit"]).open("ab") as log:
+                            log.write(canonical({**response, "action": request.get("action"),
+                                                 "generation": config["generation"], "client_sha256": peer}))
+                    send(self.wfile, response)
+                dispatch(config, serving, peer, request, deliver)
+                return
             if operation == "discover":
-                delegation = {"operator_sha256": operator, "publication_sha256": publication, "service": service}
-                mismatch = Path(config["audit"]).with_name("wrong-binding")
-                bound_cert = mismatch.read_text() if mismatch.exists() else serving
-                binding = {"operator": config["operator"], "service": service, "protocol": 1,
-                           "endpoint": list(self.server.server_address), "serving_sha256": bound_cert,
-                           "revision": 1, "expiry": int(time.time()) + 60}
-                result = {"decision": "discovered", "delegation": delegation,
-                          "delegation_signature": sign(config["operator_key"], delegation),
-                          "binding": binding, "binding_signature": sign(config["publication_key"], binding)}
+                result = self.discovery()
             elif operation == "health":
                 result = {"decision": "reachable", "service": service}
             elif operation == "request":
@@ -272,6 +288,8 @@ def exchange(args):
         data = call(config, card["endpoint"], {"operation": "discover"}, root)
     except (ConnectionError, TimeoutError) as exc:
         raise ValueError("discovery_unavailable") from exc
+    if data.get("decision") == "denied":
+        raise ValueError(data["reason"])
     delegation, binding = data["delegation"], data["binding"]
     verify(card["operator_public"], delegation, data["delegation_signature"])
     verify(card["publication_public"], binding, data["binding_signature"])
@@ -280,13 +298,13 @@ def exchange(args):
                       "service": args.service}:
         raise ValueError("publication_authority_mismatch")
     if (binding["operator"] != args.peer or binding["service"] != args.service or binding["protocol"] != 1
-            or binding["expiry"] <= int(time.time()) or binding["revision"] != 1):
+            or binding["expiry"] <= int(time.time()) or binding["revision"] != card.get("revision", 1)):
         raise ValueError("binding_mismatch")
     protected = {"operation": "request", "protocol": args.wire_version, "service": args.service,
                  "action": args.action, "request_id": args.request_id}
     result = call(config, binding["endpoint"], protected, binding["serving_sha256"])
     return {**result, "binding_verified": True, "endpoint_sha256": binding["serving_sha256"],
-            "cache_initial": "empty"}
+            "cache_initial": "empty", "binding_revision": binding["revision"]}
 
 
 def lab(args):
