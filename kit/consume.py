@@ -134,19 +134,27 @@ def new_key(folder, name):
 def configure(work, name, ca, ca_key, serial):
     folder = work / name
     folder.mkdir()
-    key, _ = new_key(folder, "endpoint" if name != "participant" else "workload")
+    key, _ = new_key(folder, "endpoint")
+    workload, _ = new_key(folder, "workload")
     operator, operator_pub = new_key(folder, "operator")
     publisher, publisher_pub = new_key(folder, "publication")
-    csr, cert = folder / "request.pem", folder / "certificate.pem"
-    ssl("req", "-new", "-key", key, "-subj", f"/CN={name}", "-out", csr)
     extension = folder / "extensions"
-    extension.write_text("subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth,clientAuth\n")
-    ssl("x509", "-req", "-in", csr, "-CA", ca, "-CAkey", ca_key, "-set_serial", str(serial),
+    extension.write_text("subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n")
+    cert, csr = folder / "certificate.pem", folder / "request.pem"
+    ssl("req", "-new", "-key", key, "-subj", f"/CN={name}-endpoint", "-out", csr)
+    ssl("x509", "-req", "-in", csr, "-CA", ca, "-CAkey", ca_key, "-set_serial", str(serial * 2),
         "-days", "1", "-extfile", extension, "-out", cert)
+    extension.write_text("extendedKeyUsage=clientAuth\n")
+    workload_cert = folder / "workload.pem"
+    ssl("req", "-new", "-key", workload, "-subj", f"/CN={name}-workload", "-out", csr)
+    ssl("x509", "-req", "-in", csr, "-CA", ca, "-CAkey", ca_key, "-set_serial", str(serial * 2 + 1),
+        "-days", "1", "-extfile", extension, "-out", workload_cert)
     state, config = folder / "peer-state.json", folder / "config.json"
     write(state, {"peers": {}})
     write(config, {"host": "127.0.0.1", "operator": name, "service": "life.reference",
                    "ca": str(ca), "certificate": str(cert), "tls_key": str(key),
+                   "client_certificate": str(workload_cert), "client_key": str(workload),
+                   "recovery_authority": f"fixture-local-recovery:{name}",
                    "operator_key": str(operator), "operator_public": str(operator_pub),
                    "publication_key": str(publisher), "publication_public": str(publisher_pub),
                    "state": str(state), "audit": str(folder / "requests.ndjson")})
@@ -199,7 +207,7 @@ def runtime(target, work):
     life = configure(work, "life-reference", ca, ca_key, 1)
     participant = configure(work, "participant", ca, ca_key, 2)
     operator_source = configure(work, "operator-node", ca, ca_key, 3)
-    participant_id = sha(ssl("x509", "-in", load(participant)["certificate"], "-outform", "DER"))
+    participant_id = sha(ssl("x509", "-in", load(participant)["client_certificate"], "-outform", "DER"))
     write(life, {**load(life), "participant_grants": [participant_id]})
     operator, op_approval, setup_origin = setup(binary, work, "operator", operator_source, "node")
     launched = []
@@ -240,6 +248,8 @@ def runtime(target, work):
     try:
         life_ready = start(life, "life")
         op_ready = start(operator, "operator")
+        check("operator_roles_separately_identified", 4, len({op_ready[key] for key in
+              ("operator_sha256", "publication_sha256", "serving_sha256", "workload_sha256")}))
         cards = {key: card_for(work, config, ready) for key, config, ready in
                  (("life", life, life_ready), ("operator", operator, op_ready))}
         refused = enroll(operator, cards["life"], False, "peer", "refused-peer")
@@ -271,7 +281,7 @@ def runtime(target, work):
             r = results[name]
             check(name + "_correlated", ["allowed" if positive else "denied", positive, False, name, True,
                                         "commonwealth-reference-v1" if positive else None,
-                                        participant_id if name.startswith("service") else op_ready["serving_sha256"]],
+                                        participant_id if name.startswith("service") else op_ready["workload_sha256"]],
                   [event["decision"], event["disclosed"], event["mutated"], r["request_id"],
                    r["binding_verified"], r.get("result"), event["client_sha256"]])
         lab_source = work / "lab-source.json"

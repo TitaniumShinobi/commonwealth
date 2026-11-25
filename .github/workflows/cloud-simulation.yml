@@ -206,7 +206,17 @@ jobs:
                   print(line)
           PY
       - name: Build and sign the fixed test Kit
-        run: python3 kit/build.py "$RUNNER_TEMP/commonwealth-kit"
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "commonwealth" / "step-7"
+          for item in ("model", "gateway"):
+              receipt = json.loads((root / (item + ".json")).read_text())
+              if receipt["revision"] != os.environ["GITHUB_SHA"] or receipt["verdict"] != "PASS":
+                  raise SystemExit("Step 7 cloud preparation must pass before Kit production")
+          PY
+          python3 kit/build.py "$RUNNER_TEMP/commonwealth-kit"
       - name: Publish separate trusted fixture inputs
         id: kit_boot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -11,10 +11,10 @@ The local fixture operator reviews the plan before writing the approval. Approva
 
 ### Connect to a service
 
-Use a foreground LIFE fixture with separate operator and publication signing keys, CA-signed loopback TLS endpoint certificate, explicit participant workload certificate grant and peer-state file initially containing `{"peers":{}}`. The consumer generates those inputs in disposable stores.
+Use a foreground LIFE fixture with separate operator and publication signing keys, CA-signed loopback TLS serving certificate, distinct client workload certificates, explicit participant workload certificate grant and peer-state file initially containing `{"peers":{}}`. The consumer generates those inputs in disposable stores.
 
 ```bash
-"$TARGET/bin/commonwealth" node start --config "$WORK/life/config.json" --ready-out "$WORK/life-ready.json"
+"$TARGET/bin/commonwealth" node start --config "$WORK/life-reference/config.json" --ready-out "$WORK/life-ready.json"
 "$TARGET/bin/commonwealth" service trust --state "$WORK/participant/peer-state.json" --reference "$WORK/life-card.json" --approval "$WORK/participant-local.json"
 "$TARGET/bin/commonwealth" service request --state "$WORK/participant/peer-state.json" --config "$WORK/participant/config.json" --peer life-reference --service life.reference --action fixture.read --request-id service-allow
 ```
@@ -24,11 +24,11 @@ Stop the foreground node with SIGTERM and verify its listener closes. A second r
 ### Run a node
 
 ```bash
-"$TARGET/bin/commonwealth" setup plan --mode node --config "$WORK/operator/config.json" --target "$WORK/setup-operator" --out "$WORK/operator-plan.json"
+"$TARGET/bin/commonwealth" setup plan --mode node --config "$WORK/operator-node/config.json" --target "$WORK/setup-operator" --out "$WORK/operator-plan.json"
 "$TARGET/bin/commonwealth" setup apply --plan "$WORK/operator-plan.json" --approval "$WORK/operator-approval.json" --target "$WORK/setup-operator"
 "$TARGET/bin/commonwealth" node start --config "$WORK/setup-operator/config.json" --ready-out "$WORK/operator-ready.json"
-"$TARGET/bin/commonwealth" peer enroll --state "$WORK/operator/peer-state.json" --reference "$WORK/life-card.json" --approval "$WORK/operator-local.json"
-"$TARGET/bin/commonwealth" peer exchange --state "$WORK/operator/peer-state.json" --config "$WORK/setup-operator/config.json" --peer life-reference --service life.reference --action fixture.read --request-id peer-allow
+"$TARGET/bin/commonwealth" peer enroll --state "$WORK/operator-node/peer-state.json" --reference "$WORK/life-card.json" --approval "$WORK/operator-local.json"
+"$TARGET/bin/commonwealth" peer exchange --state "$WORK/operator-node/peer-state.json" --config "$WORK/setup-operator/config.json" --peer life-reference --service life.reference --action fixture.read --request-id peer-allow
 ```
 
 LIFE independently approves the operator card with the same enrollment command and its own local state. Refusal leaves both fresh peer stores empty. The exchange uses only the verified installed commands, the fixture CA, and published [protocol](PROTOCOL.md).

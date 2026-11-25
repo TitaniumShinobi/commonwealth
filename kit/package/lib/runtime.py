@@ -92,7 +92,7 @@ def paths(config, path, names):
 
 
 def read_config(path):
-    return paths(load(path), path, ("ca", "certificate", "tls_key", "operator_public", "operator_key",
+    return paths(load(path), path, ("ca", "certificate", "tls_key", "client_certificate", "client_key", "operator_public", "operator_key",
                                     "publication_public", "publication_key", "state", "audit"))
 
 
@@ -101,7 +101,8 @@ def context(config, server=False):
                                         cafile=config["ca"])
     result.minimum_version = ssl.TLSVersion.TLSv1_3
     result.verify_mode = ssl.CERT_REQUIRED
-    result.load_cert_chain(config["certificate"], config["tls_key"])
+    certificate, key = ("certificate", "tls_key") if server else ("client_certificate", "client_key")
+    result.load_cert_chain(config[certificate], config[key])
     return result
 
 
@@ -140,6 +141,7 @@ def listener(config_path, ready_path):
     publication = fingerprint(config["publication_public"])
     operator = fingerprint(config["operator_public"])
     serving = cert_digest(config["certificate"])
+    workload = cert_digest(config["client_certificate"])
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
@@ -161,7 +163,7 @@ def listener(config_path, ready_path):
             elif operation == "request":
                 state = load(config["state"])
                 accepted = (peer in config.get("participant_grants", []) or
-                            any(card["serving_sha256"] == peer for card in state["peers"].values()))
+                            any(card["workload_sha256"] == peer for card in state["peers"].values()))
                 shape = request.get("protocol") == 1 and request.get("service") == service
                 allowed = shape and accepted and request.get("action") == "fixture.read"
                 result = {"decision": "allowed" if allowed else "denied",
@@ -191,6 +193,7 @@ def listener(config_path, ready_path):
         save(ready_path, {"endpoint": list(server.server_address), "listener": "ready",
                           "operator": config["operator"], "operator_sha256": operator,
                           "publication_sha256": publication, "serving_sha256": serving,
+                          "workload_sha256": workload, "recovery_authority": config["recovery_authority"],
                           "service": service, "configuration_sha256": sha(Path(config_path).read_bytes()),
                           "origin": origin()})
         server.serve_forever(poll_interval=0.2)
