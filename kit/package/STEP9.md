@@ -114,3 +114,190 @@ done
 ```
 
 For the browser route, run the same inspect, digest, and exchange commands after each click sequence. Substitute the browser operator's state directory and use request IDs `browser-upgrade`, `browser-incompatible`, and `browser-rollback`. The compatible upgrade selects the staged upgrade directory. The incompatible plan returns `release_incompatible` and leaves the upgrade selected. Rollback selects the base. Each selected binary must read `commonwealth-reference-v1`; match its request ID and client identity against the counterpart's audit. A temporary LIFE restart in this cloud fixture has a **15-second** bound from stop request to first authorized read through the restored binding, using the original enrollment and unchanged trust and policy.
+
+## Restart LIFE with the original enrollment
+
+Use the already-running loopback LIFE fixture and its enrolled client. In the commands below, `$LIFE_CONFIG` and `$LIFE_READY` identify the original listener configuration and readiness file, and `$LIFE_PID` is the original foreground listener's PID recorded by the shell that started it. `$CLIENT` is the enrolled operator authority directory. Finish the baseline read before stopping the listener.
+
+```bash
+BIN="$TARGET/bin/commonwealth"
+life_read() {
+  "$BIN" peer exchange --state "$CLIENT/peers.json" --config "$CLIENT/node.json" \
+    --peer life-reference --service life.reference --action fixture.read --request-id "$1"
+}
+life_read before-outage > "$WORK/life-before.json"
+"$BIN" operator inspect --authority "$CLIENT" > "$WORK/life-trust-before.json"
+sha256sum "$CLIENT/node.json" > "$WORK/life-client-policy-before"
+python3 - "$LIFE_CONFIG" "$LIFE_READY" "$WORK/life-restart.json" <<'PY'
+import json, sys
+from pathlib import Path
+original, ready, output = map(Path, sys.argv[1:])
+config = json.loads(original.read_text())
+endpoint = json.loads(ready.read_text())["endpoint"]
+assert endpoint[0] == config["host"] == "127.0.0.1"
+config["listen_port"] = endpoint[1]
+output.write_text(json.dumps(config))
+PY
+python3 -c 'import time; print(time.monotonic())' > "$WORK/life-stop-time"
+kill -TERM "$LIFE_PID"
+for ((i=0; i<80; i++)); do
+  if ! kill -0 "$LIFE_PID" 2>/dev/null; then break; fi
+  sleep 0.05
+done
+life_read during-outage > "$WORK/life-outage.json" || true
+python3 - "$WORK/life-outage.json" <<'PY'
+import json, sys
+assert json.load(open(sys.argv[1]))["reason"] == "discovery_unavailable"
+PY
+"$BIN" peer exchange --state "$CLIENT/peers.json" --config "$CLIENT/node.json" \
+  --peer local-counterpart --service life.reference --action fixture.read --request-id outage-control
+"$BIN" node start --config "$WORK/life-restart.json" --ready-out "$WORK/life-restart-ready.json" &
+LIFE_RESTART_PID=$!
+for ((i=0; i<80; i++)); do
+  if [ -s "$WORK/life-restart-ready.json" ]; then break; fi
+  sleep 0.05
+done
+test -s "$WORK/life-restart-ready.json"
+life_read reference-recovered > "$WORK/life-after.json"
+python3 -c 'import time; print(time.monotonic())' > "$WORK/life-read-time"
+"$BIN" operator inspect --authority "$CLIENT" > "$WORK/life-trust-after.json"
+cmp "$WORK/life-trust-before.json" "$WORK/life-trust-after.json"
+sha256sum --check "$WORK/life-client-policy-before"
+python3 - "$WORK" "$LIFE_CONFIG" <<'PY'
+import json, sys
+from pathlib import Path
+work, original = map(Path, sys.argv[1:])
+before = json.loads((work / "life-before.json").read_text())
+after = json.loads((work / "life-after.json").read_text())
+config = json.loads(original.read_text())
+restart = json.loads((work / "life-restart.json").read_text())
+assert restart.pop("listen_port") == before["binding_identity"]["endpoint"][1]
+assert restart == config
+assert before["binding_identity"] == after["binding_identity"]
+assert after["binding_verified"] and after["result"] == "commonwealth-reference-v1"
+rows = [json.loads(line) for line in Path(config["audit"]).read_text().splitlines()]
+assert any(row["request_id"] == "reference-recovered" and row["decision"] == "allowed"
+           and row["disclosed"] for row in rows)
+seconds = float((work / "life-read-time").read_text()) - float((work / "life-stop-time").read_text())
+assert 0 <= seconds <= 15, seconds
+print(json.dumps({"seconds_to_first_audited_read": seconds, "binding": after["binding_identity"]}))
+PY
+```
+
+Keep the original enrollment throughout. The two signed binding digests in the exchange receipts may differ because the binding's expiry is refreshed. Preserve both receipts, the failure and control receipts, the trust snapshots, and the destination audit. Terminate `$LIFE_RESTART_PID` after collecting evidence.
+
+## Execute the fenced restore
+
+Use the installed loopback fixture with an active broker-backed generation-1 listener, an enrolled reader, and an unrelated enrolled counterpart. The cloud fixture sets up those processes with the installed Kit and separates the old listener's OS account from the authority. For this procedure, `$OWNER` is the serving authority directory, `$OLD_CONFIG` is its protected generation-1 configuration, and `$OLD_READY` is the running old listener's readiness file. `$REPLACEMENT` and `$WORK/restored-app.json` must be absent. Keep the old listener and its authority broker running throughout.
+
+```bash
+"$BIN" operator bootstrap --authority "$REPLACEMENT" --name replacement-host
+python3 - "$OLD_CONFIG" "$REPLACEMENT/node.json" "$WORK" <<'PY'
+import hashlib, json, subprocess, sys
+from pathlib import Path
+old_path, fresh_path, work = map(Path, sys.argv[1:])
+old = json.loads(old_path.read_text())
+fresh = json.loads(fresh_path.read_text())
+bundle = Path(old["ca"])
+with bundle.open("ab") as out:
+    out.write(Path(fresh["ca"]).read_bytes())
+new = {**old, "generation": 2, "application": str(work / "restored-app.json"),
+       "certificate": fresh["certificate"], "tls_key": fresh["tls_key"],
+       "audit": str(work / "restored-audit.ndjson")}
+new.pop("listen_port", None)
+assert not Path(new["application"]).exists()
+(work / "replacement.json").write_text(json.dumps(new))
+for label, node in (("old", old), ("replacement", new)):
+    der = subprocess.check_output(["openssl", "x509", "-in", node["certificate"], "-outform", "DER"])
+    identity = {"operator": node["operator"], "service": node["service"], "generation": node["generation"],
+                "certificate": hashlib.sha256(der).hexdigest(), "application": node["application"]}
+    (work / (label + "-identity.json")).write_text(json.dumps({"identity": identity}))
+PY
+OLD_APP=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["identity"]["application"])' "$WORK/old-identity.json")
+NEW_APP="$WORK/restored-app.json"
+apply_plan() {
+  action=$1 payload=$2 target=$3
+  "$BIN" operator plan --authority "$OWNER" --operation "$action" --target "$target" \
+    --payload "$payload" --out "$WORK/$action-plan.json" || return
+  cat "$WORK/$action-plan.json"
+  read -r -p "Type approve to apply this plan: " answer
+  [ "$answer" = approve ] || return 1
+  "$BIN" operator approve --authority "$OWNER" --plan "$WORK/$action-plan.json" \
+    --confirm --out "$WORK/$action-approval.json" || return
+  "$BIN" operator apply --authority "$OWNER" --plan "$WORK/$action-plan.json" \
+    --approval "$WORK/$action-approval.json" --target "$target"
+}
+apply_plan service-backup "$WORK/old-identity.json" "$OLD_APP"
+apply_plan service-fence "$WORK/old-identity.json" "$OLD_APP"
+"$BIN" operator inspect --authority "$OWNER" > "$WORK/authority-fenced.json"
+python3 - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+state = json.loads((work / "authority-fenced.json").read_text())
+assert state["serving"]["fenced"]
+payload = json.loads((work / "replacement-identity.json").read_text())
+payload["backup_sha256"] = state["service_backup"]["sha256"]
+(work / "service-restore.json").write_text(json.dumps(payload))
+PY
+test ! -e "$NEW_APP"
+apply_plan service-restore "$WORK/service-restore.json" "$NEW_APP"
+"$BIN" node start --config "$WORK/replacement.json" --ready-out "$WORK/replacement-ready.json"
+```
+
+For the guided route, run the same payload-generation commands. Open the installed guide under `$OWNER`. For backup and fence select `service-backup` and `service-fence` with the contents of `old-identity.json` and **Target** set to `$OLD_APP`. For restore select `service-restore` with `service-restore.json` and **Target** set to `$NEW_APP`. For each operation click **Review plan**, inspect the identity and target, then click **Approve reviewed plan** and **Apply approved plan**. Start the replacement listener in a separate terminal as shown in the CLI route.
+
+With the replacement listening, use the earlier `export-card` command with `--authority "$OWNER" --ready "$WORK/replacement-ready.json" --out "$WORK/replacement-public"`. Add `"revision": 2` to the exported `card.json` before the reader reviews it. Use the documented `enroll` plan, approval, and apply sequence under `$CLIENT` with this card as the payload. For the guided equivalent select `enroll`, use the same payload and target, and complete the same three buttons. If the reader was withdrawn during the fixture, the serving authority also requires a fresh approval of the reader card at revision 2. Before renewing it, run this direct replacement probe. It must return `destination_policy`.
+
+```bash
+python3 - "$TARGET/lib" "$CLIENT/node.json" "$WORK/replacement-ready.json" <<'PY'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from runtime import call, read_config
+ready = json.loads(Path(sys.argv[3]).read_text())
+request = {"operation": "request", "protocol": 1, "service": ready["service"],
+           "action": "fixture.read", "request_id": "restore-stale"}
+result = call(read_config(sys.argv[2]), ready["endpoint"], request, ready["serving_sha256"])
+assert result["reason"] == "destination_policy" and "result" not in result
+print(json.dumps(result))
+PY
+```
+
+Renew only after that denial, using the same three-step approval sequence on the serving authority with the reviewed reader card. The reader card keeps the reader’s service identity and uses revision 2 for the renewed enrollment.
+
+```bash
+python3 - "$TARGET/lib" "$CLIENT/node.json" "$OLD_READY" <<'PY'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from runtime import call, read_config
+config = read_config(sys.argv[2])
+ready = json.loads(Path(sys.argv[3]).read_text())
+for action in ("fixture.read", "fixture.write"):
+    request = {"operation": "request", "protocol": 1, "service": ready["service"],
+               "action": action, "request_id": "fenced-" + action, "value": "unauthorized-replacement"}
+    result = call(config, ready["endpoint"], request, ready["serving_sha256"])
+    assert result["reason"] == "generation_fenced" and not result["mutated"] and "result" not in result
+    print(json.dumps(result))
+PY
+PEER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["operator"])' "$WORK/replacement-ready.json")
+"$BIN" peer exchange --state "$CLIENT/peers.json" --config "$CLIENT/node.json" \
+  --peer "$PEER" --service life.reference --action fixture.read --request-id network-recovered \
+  > "$WORK/network-recovered.json"
+python3 - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+result = json.loads((work / "network-recovered.json").read_text())
+ready = json.loads((work / "replacement-ready.json").read_text())
+assert result["result"] == "recoverable-version" and result["binding_revision"] == 2
+assert result["endpoint_sha256"] == ready["serving_sha256"]
+PY
+"$BIN" peer exchange --state "$CLIENT/peers.json" --config "$CLIENT/node.json" \
+  --peer local-counterpart --service life.reference --action fixture.read --request-id network-control
+```
+
+For a guided recovered read, select `exchange` under `$CLIENT` with **Target** set to `$CLIENT`. Use the JSON payload `{"peer":"fenced-service","service":"life.reference","action":"fixture.read","request_id":"network-recovered-guided"}`, substituting the actual operator from replacement readiness. Complete **Review plan**, **Approve reviewed plan**, and **Apply approved plan**. The nested `exchange` result contains the restored record, revision, and certificate digest. Use the same action with peer `local-counterpart` and a different request ID for the guided control read.
+
+Expect `commonwealth-reference-v1` from the unaffected counterpart. Preserve the old and replacement destination audit rows, the signed-binding receipt, the direct old-generation denials, and the control exchange.
