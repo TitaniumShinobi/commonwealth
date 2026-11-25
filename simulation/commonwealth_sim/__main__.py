@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from .actor import LINE, MEMORY, decode, encode, tag
-from .recovery_audit import summarize
+from .recovery_audit import digest as audit_digest, summarize
 
 BASELINE = "6c2dbf2a79daea32ecafd51d56eae0d9f35dd8d3"
 ROLES = ("a-authority", "a-application", "b", "access")
@@ -310,7 +310,8 @@ class Case:
         accounting = summarize(observations, records, fixture, lifecycle)
         self.check(fixture["end"], "modeled_audit_and_effect_accounting",
                    {"reconciled": True, "unauthorized_effects": 0,
-                    "founder_or_delegate_effects": 0, "unaccounted_effects": 0}, accounting)
+                    "founder_or_delegate_effects": 0, "unaccounted_effects": 0,
+                    "unobserved_declared_effects": 0}, accounting)
         # Exercise the independent scorer on an intentionally different ledger,
         # retaining the genuine trace and audit records in the original receipt.
         template = next(row for row in records if row["operation"] == "issue"
@@ -323,6 +324,30 @@ class Case:
         self.check(fixture["end"], "scorer_rejects_delegate_and_unaccounted_effect",
                    {"reconciled": False, "founder_or_delegate_effects": 1,
                     "unaccounted_effects": 1}, challenged)
+        # A genuine capability-bearing principal and matching transport/journal
+        # pair are insufficient when this effect is not in the trusted fixture.
+        fence = next(row for row in records if row["operation"] == "fence" and row["decision"] == "fenced")
+        original = next(entry for entry in observations
+                        if entry["actor"] == fence["actor"]
+                        and entry["request"]["envelope"]["sender"] == fence["principal"]
+                        and entry["request"]["envelope"]["id"] == fence["id"])
+        prior = original["request"]["envelope"]
+        new_tick = fixture["end"]
+        sequence = max(entry["request"]["envelope"]["sequence"] for entry in observations
+                       if entry["request"]["envelope"]["sender"] == fence["principal"]) + 1
+        envelope = {**prior, "id": str(sequence), "sequence": sequence, "tick": new_tick,
+                    "valid_from": new_tick, "expires": new_tick + 1}
+        request = {"kind": "deliver", "envelope": envelope,
+                   "tag": tag(self.topology["keys"][fence["principal"]]["recovery"], envelope)}
+        injected_dispatch = {"actor": fence["actor"], "request": request, "reply": original["reply"]}
+        injected_row = {**fence, "tick": new_tick, "id": envelope["id"],
+                        "request_sha256": audit_digest(envelope["payload"]),
+                        "reply_sha256": audit_digest(injected_dispatch["reply"])}
+        challenged = summarize([*observations, injected_dispatch], [*records, injected_row],
+                               fixture, lifecycle)
+        self.check(new_tick, "scorer_rejects_reconciled_undeclared_fence",
+                   {"reconciled": True, "unauthorized_effects": 1, "unaccounted_effects": 0,
+                    "founder_or_delegate_effects": 0, "unobserved_declared_effects": 0}, challenged)
         if fixture.get("score_restore"):
             baseline = next((x["observed"] for x in self.results if x["criterion"] == "peer_state"), None)
             ending = next((x["observed"] for x in reversed(self.results)

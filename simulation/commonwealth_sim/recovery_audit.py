@@ -1,4 +1,6 @@
 """Independent reconciliation of the modeled recovery dispatch and effect ledgers."""
+from collections import Counter
+
 from .recovery import digest
 
 # This inventory covers fixture principals and privilege-bearing outputs.
@@ -55,6 +57,11 @@ def summarize(dispatches, records, fixture, lifecycle):
     unauthorized, founder, unaccounted = 0, 0, 0
     unexpected = []
     attempts, rejections, effects = 0, 0, 0
+    plan = fixture["effect_plan"]
+    remaining = Counter(
+        (p["tick"], p["actor"], p["principal"], p["operation"], p["decision"],
+         digest(p["payload"]) if "payload" in p else None, p.get("phase"))
+        for p in plan)
     for key, row in observed_by_id.items():
         envelope, reply = expected_by_id.get(key, ({}, {}))
         observation = reply.get("observation", {})
@@ -62,7 +69,8 @@ def summarize(dispatches, records, fixture, lifecycle):
         complete = (envelope.get("tick") == row["tick"] and envelope.get("payload", {}).get("op") == op
                     and row["request_sha256"] == digest(envelope.get("payload"))
                     and row["reply_sha256"] == digest(reply)
-                    and observation.get("decision") == row["decision"])
+                    and observation.get("decision") == row["decision"]
+                    and observation.get("disclosed", False) == row["disclosed"])
         compared &= complete
         known = row["decision"] in ACCEPTANCE.get(op, set())
         state_change = row["pre_state_sha256"] != row["post_state_sha256"]
@@ -80,7 +88,7 @@ def summarize(dispatches, records, fixture, lifecycle):
         if (not complete or op not in CAPABILITIES.get(row["principal"], set())
                 or (state_change and op in READ_ONLY)):
             unaccounted += 1
-        if op in BOUNDARIES or disclosed:
+        if effect:
             tick = fixture["ticks"].get(str(row["tick"]), {})
             checks = tick.get("expect", {})
             explicit = checks.get(f'{row["actor"]}/{op}', checks.get(op))
@@ -92,8 +100,15 @@ def summarize(dispatches, records, fixture, lifecycle):
                     explicit = {"decision": "published"}
             if op == "disclose":
                 explicit = checks.get("read_result")
-            if (not explicit or explicit["decision"] != row["decision"]
-                    or (disclosed and explicit.get("disclosed") is not True)):
+            identity = (row["tick"], row["actor"], row["principal"], op, row["decision"])
+            request_key = (row["request_sha256"], envelope.get("phase"))
+            candidate = next((identity + key for key in
+                              (request_key, (None, envelope.get("phase")))
+                              if remaining[identity + key] > 0), None)
+            if candidate is not None:
+                remaining[candidate] -= 1
+            if (candidate is None or (explicit and explicit["decision"] != row["decision"])
+                    or (disclosed and (not explicit or explicit.get("disclosed") is not True))):
                 unauthorized += 1
                 unexpected.append({field: row[field] for field in ("principal", "operation", "decision", "tick")})
     lifecycle_ok = [(e["lifecycle"], e["tick"]) for e in lifecycle] == [
@@ -102,5 +117,6 @@ def summarize(dispatches, records, fixture, lifecycle):
             "rejections": rejections, "recorded_effects": effects,
             "unauthorized_effects": unauthorized, "unexpected_boundary_effects": unexpected, "founder_or_delegate_effects": founder,
             "unaccounted_effects": unaccounted, "dispatches": len(expected_by_id),
-            "journal_entries": len(records), "window": [0, fixture["end"]],
+            "journal_entries": len(records), "fixture_effect_plan_sha256": digest(plan),
+            "declared_effects": len(plan), "unobserved_declared_effects": sum(remaining.values()), "window": [0, fixture["end"]],
             "inventory_sha256": digest({k: sorted(v) for k, v in CAPABILITIES.items()})}

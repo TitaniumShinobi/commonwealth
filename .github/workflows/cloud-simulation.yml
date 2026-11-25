@@ -45,7 +45,7 @@ jobs:
         run: |
           export CHECKOUT_SHA="$(git rev-parse HEAD)"
           python3 -m commonwealth_sim run --topology simulation/fixtures/topology.json --cases simulation/fixtures/cases.json --suite step-5 --out "$RUNNER_TEMP/commonwealth/step-5"
-      - name: Run Step 6 twice and compare clean replays and audit coverage
+      - name: Run Step 6 twice and compare clean replays and fixture-authorized effects
         run: |
           export CHECKOUT_SHA="$(git rev-parse HEAD)"
           root="$RUNNER_TEMP/commonwealth"
