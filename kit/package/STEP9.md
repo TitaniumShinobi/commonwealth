@@ -13,7 +13,29 @@ Use an absolute target and a payload such as `{"name":"fixture-operator","protoc
 
 `commonwealth operator guide --authority "$WORK/operator-private" --ready "$WORK/guide-ready.json"` serves only on an assigned literal loopback address. Leave it running in a separate terminal. Open the one-time URL from the private readiness file. Review the typed plan, click approval, then apply. Terminate the guide before removing its temporary state. Keep the URL and cookies out of receipts. `operator diagnostics --boundary reachability --confirm` exports only the schema, boundary, and authority revision. Review the export before sharing.
 
-The signed test.2 and test.3 packages can be installed to separate absent targets by adding the expected `--version` to the bootstrap verifier's plan command. The Step 9 fixture checks verified compatible and incompatible candidates and executes the selected supported client against the local counterpart. For a reachable node use the setup, foreground startup, and peer exchange instructions in GUIDE.md. A failed discovery on the reference path calls for a separate, locally approved counterpart identity. Use the counterpart's own audit to correlate the permitted and denied requests.
+The signed test.2 and test.3 packages can be installed to separate absent targets by adding the expected `--version` to the bootstrap verifier's plan command. The Step 9 fixture checks verified compatible and incompatible candidates and executes the selected supported client against the local counterpart. For an operator node, launch the listener in the first shell.
+
+```bash
+"$TARGET/bin/commonwealth" node start --config "$WORK/operator-private/node.json" --ready-out "$WORK/operator-ready.json"
+```
+
+In a separate shell, wait for the listener to write `operator-ready.json`, then export the public card.
+
+```bash
+"$TARGET/bin/commonwealth" operator export-card --authority "$WORK/operator-private" --ready "$WORK/operator-ready.json" --out "$WORK/operator-public"
+```
+
+The export contains a card and the two public verification keys. Use a separate operator directory for the counterpart. In this loopback fixture, make both fixture CA certificates available to both nodes in a public CA bundle and point each node configuration's `ca` field at that bundle before startup. Each operator reviews the other party's card and issues and applies a local approval. Repeat the following on the other side before attempting a protected exchange.
+
+```bash
+"$TARGET/bin/commonwealth" operator plan --authority "$WORK/operator-private" --operation enroll --target "$WORK/operator-private" --payload "$WORK/counterpart-public/card.json" --out "$WORK/counterpart-plan.json"
+"$TARGET/bin/commonwealth" operator approve --authority "$WORK/operator-private" --plan "$WORK/counterpart-plan.json" --confirm --out "$WORK/counterpart-approval.json"
+"$TARGET/bin/commonwealth" operator apply --authority "$WORK/operator-private" --plan "$WORK/counterpart-plan.json" --approval "$WORK/counterpart-approval.json" --target "$WORK/operator-private"
+"$TARGET/bin/commonwealth" peer exchange --state "$WORK/operator-private/peers.json" --config "$WORK/operator-private/node.json" --peer local-counterpart --service life.reference --action fixture.read --request-id first-read
+"$TARGET/bin/commonwealth" peer exchange --state "$WORK/operator-private/peers.json" --config "$WORK/operator-private/node.json" --peer local-counterpart --service life.reference --action fixture.write --request-id denied-write
+```
+
+With the peer named `local-counterpart`, expect `commonwealth-reference-v1` for the read and a policy denial for the write. Keep both listeners running through both requests and stop them before removing the disposable state. A failed discovery on the reference path calls for a separate, locally approved counterpart identity. Use the counterpart's own audit to correlate the permitted and denied requests.
 
 The fixture tests local lifecycle authority state, including a modeled blocked restore and preservation of a peer withdrawal and binding floor across application-state restoration. Full installed network-peer lifecycle and complete browser/CLI lifecycle parity have separate evidence gates. The independent status extension uses the published protocol profile and its own Python implementation, source and artifact hashes, TLS endpoint, and publication authority. The fixture tests compatible build, incompatible startup, and version rejection on the active service.
 

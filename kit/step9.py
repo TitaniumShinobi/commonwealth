@@ -232,7 +232,11 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
             write(cfg, {**load(cfg), "participant_grants": [grant]})
             proc, observed = start([binary, "node", "start", "--config", cfg, "--ready-out", ready], ready)
             processes.append(proc)
-            cards[name] = card(root, name, load(cfg), observed)
+            exported = operate(binary, Path(load(cfg)["authority"]), "export-card", "--ready", ready,
+                               "--out", root / (name + "-public"))
+            cards[name] = Path(exported["card"])
+            check(name + "_exports_public_card", ["public_card_exported", ["card.json", "operator.pem", "publication.pem"]],
+                  [exported["decision"], sorted(path.name for path in cards[name].parent.iterdir())])
         for name in cards:
             check(name + "_locally_accepted", "applied",
                   enroll(binary, root, load(client), cards[name], name)["decision"])
@@ -304,33 +308,41 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         details["extension"] = {"source_sha256": sha(source.read_bytes()), "artifact_sha256": sha(artifact.read_bytes()),
                                 "contract_sha256": sha((extension / "contract.json").read_bytes()),
                                 "published": observed, "audit": Path(load(ext_conf)["audit"]).read_text().splitlines()}
+        approved = approved_card(new_card)
+        plan, permit = approval(binary, scripted, root, "enroll-check", "enroll", target, approved)
+        change = root / "changed-card"
+        write(change, {**load(plan), "payload": {**approved, "endpoint": ["127.0.0.1", 1]}})
+        check("changed_complete_card_denied", "peer_card_changed", apply(binary, scripted, target, change, permit)["reason"])
+        prior_reference = Path(load(ref)["audit"]).read_bytes()
+        plan, permit = approval(binary, scripted, root, "exit", "exit", target, {"operator": "life-reference"})
+        check("exit_authority_operation", "applied", apply(binary, scripted, target, plan, permit)["decision"])
+        check("exited_peer_rejected_at_installed_client", "peer_not_enrolled",
+              exchange(binary, client, "life-reference", "life.reference", "fixture.read", "exited").get("reason"))
+        state = operate(binary, scripted, "inspect")
+        restored = {"data": "older-application"}
+        payload = {"application": restored, "backup_sha256": sha(canonical(restored)), "binding_revision": 2,
+                   "authority_revision": state["revision"], "ingress_fenced": True, "writer_fenced": True}
+        plan, permit = approval(binary, scripted, root, "restore-no-fence", "restore", target,
+                                {**payload, "writer_fenced": False})
+        check("restore_without_fence", "protected_service_closed", apply(binary, scripted, target, plan, permit)["reason"])
+        plan, permit = approval(binary, scripted, root, "restore", "restore", target, payload)
+        check("restore_approved_state", "applied", apply(binary, scripted, target, plan, permit)["decision"])
+        newer = operate(binary, scripted, "inspect")
+        check("restore_preserves_exit_and_revision", [["life-reference"], False, 2, restored],
+              [newer["withdrawn"], "life-reference" in newer["peers"], newer["binding_floor"], newer["application"]])
+        check("exited_peer_rejected_after_older_state_restore", "peer_not_enrolled",
+              exchange(binary, client, "life-reference", "life.reference", "fixture.read", "exit-after-restore").get("reason"))
+
+        check("reference_listener_stayed_running_through_exit_and_restore", True, processes[-2].poll() is None)
+        check("exited_client_generated_no_destination_request", sha(prior_reference),
+              sha(Path(load(ref)["audit"]).read_bytes()))
+        check("unrelated_counterpart_operated_after_exit_and_restore", "commonwealth-reference-v1",
+              request(binary, "local-counterpart", "control-after-restore").get("result"))
+        details["counterpart_audit"] = Path(load(local)["audit"]).read_text().splitlines()
+
     finally:
         for process in reversed(processes):
             stop(process)
-
-    approved = approved_card(new_card)
-    plan, permit = approval(binary, scripted, root, "enroll-check", "enroll", target, approved)
-    change = root / "changed-card"
-    write(change, {**load(plan), "payload": {**approved, "endpoint": ["127.0.0.1", 1]}})
-    check("changed_complete_card_denied", "peer_card_changed", apply(binary, scripted, target, change, permit)["reason"])
-    plan, permit = approval(binary, scripted, root, "exit", "exit", target, {"operator": "life-reference"})
-    check("exit_authority_operation", "applied", apply(binary, scripted, target, plan, permit)["decision"])
-    check("exited_peer_rejected_at_installed_client", "peer_not_enrolled",
-          exchange(binary, client, "life-reference", "life.reference", "fixture.read", "exited").get("reason"))
-    state = operate(binary, scripted, "inspect")
-    restored = {"data": "older-application"}
-    payload = {"application": restored, "backup_sha256": sha(canonical(restored)), "binding_revision": 2,
-               "authority_revision": state["revision"], "ingress_fenced": True, "writer_fenced": True}
-    plan, permit = approval(binary, scripted, root, "restore-no-fence", "restore", target,
-                            {**payload, "writer_fenced": False})
-    check("restore_without_fence", "protected_service_closed", apply(binary, scripted, target, plan, permit)["reason"])
-    plan, permit = approval(binary, scripted, root, "restore", "restore", target, payload)
-    check("restore_approved_state", "applied", apply(binary, scripted, target, plan, permit)["decision"])
-    newer = operate(binary, scripted, "inspect")
-    check("restore_preserves_exit_and_revision", [["life-reference"], False, 2, restored],
-          [newer["withdrawn"], "life-reference" in newer["peers"], newer["binding_floor"], newer["application"]])
-    check("exited_peer_rejected_after_older_state_restore", "peer_not_enrolled",
-          exchange(binary, client, "life-reference", "life.reference", "fixture.read", "exit-after-restore").get("reason"))
 
     # The host process has no ability to read the private authority. It consumes
     # a separate public workspace and an allowlisted reviewed diagnostic.
@@ -351,6 +363,9 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         archived_host = run("sudo", "-n", "runuser", "-u", "nobody", "--", "cat", public / "host.json")
         details["host"] = json.loads(archived_host.stdout) if archived_host.returncode == 0 and archived_host.stdout else {
             "verdict": "UNVERIFIED", "exit": done.returncode}
+        manifest = ws / "operator-help/plugin.json"
+        details["host"]["binary_sha256"] = sha(Path(codex).read_bytes())
+        details["host"]["plugin_manifest_sha256"] = sha(manifest.read_bytes())
         proposed = public / "proposed-plan.json"
         shutil.copyfile(plan, proposed)
         public_kit = public / "verified-kit"

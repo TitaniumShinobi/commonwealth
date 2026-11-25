@@ -265,6 +265,9 @@ def exchange(args):
     if not card:
         raise ValueError("peer_not_enrolled")
     root = card["serving_sha256"]
+    if "authority" in config and (fingerprint(card["operator_public"]) != card["operator_sha256"]
+            or fingerprint(card["publication_public"]) != card["publication_sha256"]):
+        raise ValueError("enrolled_key_changed")
     try:
         data = call(config, card["endpoint"], {"operation": "discover"}, root)
     except (ConnectionError, TimeoutError) as exc:

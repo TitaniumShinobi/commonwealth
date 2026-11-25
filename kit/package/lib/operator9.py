@@ -200,10 +200,30 @@ def export(directory, failure, confirmed):
     return {"schema": 1, "boundary": failure, "authority_revision": revision}
 
 
+def export_card(directory, readiness, destination):
+    config = load(Path(directory) / "node.json")
+    ready = load(readiness)
+    fields = ("operator", "operator_sha256", "publication_sha256", "serving_sha256",
+              "workload_sha256", "endpoint")
+    card = {**{field: ready[field] for field in fields}, "protocol": 1}
+    keys = {role: Path(config[f"{role}_public"]) for role in ("operator", "publication")}
+    if any(public_fingerprint(path) != card[f"{role}_sha256"] for role, path in keys.items()):
+        raise Denied("readiness_identity_changed")
+    public = Path(destination).resolve()
+    public.mkdir(mode=0o755)
+    for role, source in keys.items():
+        key = public / f"{role}.pem"
+        key.write_bytes(source.read_bytes())
+        card[f"{role}_public"] = str(key)
+    save(public / "card.json", card)
+    return {"decision": "public_card_exported", "card": str(public / "card.json"),
+            "card_sha256": sha(canonical(card))}
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog="commonwealth operator")
     parser.add_argument("action", choices=("init", "plan", "approve", "apply", "rotate", "inspect",
-                                           "diagnostics", "guide", "bootstrap"))
+                                           "diagnostics", "guide", "bootstrap", "export-card"))
     parser.add_argument("--authority", required=True)
     for key in ("operation", "target", "payload", "plan", "approval", "out", "boundary",
                 "ready", "name"):
@@ -233,6 +253,10 @@ def main(argv):
         elif args.action == "inspect":
             with database(directory) as db:
                 result = state_of(db)
+        elif args.action == "export-card":
+            result = export_card(directory, args.ready, args.out)
+            print(canonical(result).decode(), end="")
+            return 0
         elif args.action == "guide":
             from guide9 import serve
             return serve(directory, args.ready, min(args.seconds, 120))
