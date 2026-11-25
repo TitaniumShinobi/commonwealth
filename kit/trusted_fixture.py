@@ -22,7 +22,7 @@ def provision(base):
         key.chmod(0o600)
         (bootstrap / public).write_bytes(ssl("pkey", "-in", key, "-pubout"))
     source = Path(__file__).resolve().parent
-    for name in ("verify_kit.py", "consume.py"):
+    for name in ("verify_kit.py", "consume.py", "step9.py", "browser9.mjs", "host9.py"):
         shutil.copyfile(source / name, bootstrap / name)
     digest = sha(ssl("pkey", "-pubin", "-in", bootstrap / "release-root.pem", "-outform", "DER"))
     pins = {"fingerprint": digest, "encoding": "SHA-256(DER SubjectPublicKeyInfo)",
@@ -47,18 +47,24 @@ def sign(base, unsigned):
     try:
         for case, source, key in (("valid", "valid", "release.key"),
                                   ("forbidden", "forbidden", "release.key"),
-                                  ("alternate", "valid", "alternate.key")):
+                                  ("alternate", "valid", "alternate.key"),
+                                  ("step9-base", "step9-base", "release.key"),
+                                  ("step9-upgrade", "step9-upgrade", "release.key"),
+                                  ("step9-incompatible", "step9-incompatible", "release.key")):
             candidate = unsigned / source
             destination = release / case
             destination.mkdir()
             manifest = load(candidate / "manifest.json")
-            archive = (candidate / ARCHIVE).read_bytes()
-            expected = {"schema": 1, "kit_version": pins["version"],
-                        "source_revision": pins["source_revision"], "archive": ARCHIVE,
+            version = {"step9-base": "0.1.0-test.2", "step9-upgrade": "0.1.0-test.3",
+                       "step9-incompatible": "0.1.0-test.3"}.get(case, pins["version"])
+            basename = f"commonwealth-kit-{version}.tar.gz"
+            archive = (candidate / basename).read_bytes()
+            expected = {"schema": 1, "kit_version": version,
+                        "source_revision": pins["source_revision"], "archive": basename,
                         "bytes": len(archive), "sha256": sha(archive)}
             if manifest != expected or len(archive) > 4 * 1024 ** 2:
                 raise SystemExit("unsigned candidate does not match pinned release coordinate or digest")
-            (destination / ARCHIVE).write_bytes(archive)
+            (destination / basename).write_bytes(archive)
             signed = destination / "manifest.json"
             write(signed, manifest)
             ssl("pkeyutl", "-sign", "-rawin", "-inkey", secrets / key, "-in", signed,

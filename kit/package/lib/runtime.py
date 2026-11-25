@@ -271,7 +271,7 @@ def exchange(args):
     if (binding["operator"] != args.peer or binding["service"] != args.service or binding["protocol"] != 1
             or binding["expiry"] <= int(time.time()) or binding["revision"] != 1):
         raise ValueError("binding_mismatch")
-    protected = {"operation": "request", "protocol": 1, "service": args.service,
+    protected = {"operation": "request", "protocol": args.wire_version, "service": args.service,
                  "action": args.action, "request_id": args.request_id}
     result = call(config, binding["endpoint"], protected, binding["serving_sha256"])
     return {**result, "binding_verified": True, "endpoint_sha256": binding["serving_sha256"],
@@ -295,6 +295,9 @@ def lab(args):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "operator":
+        from operator9 import main as operator_main
+        return operator_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
     parts = parser.add_subparsers(dest="part", required=True)
     spec = {
@@ -315,6 +318,8 @@ def main():
             command.set_defaults(handler=handler)
             for field in fields:
                 command.add_argument(f"--{field}", required=field != "approval", type=int if field == "seed" else str)
+            if handler is exchange:
+                command.add_argument("--wire-version", type=int, default=1)
     args = parser.parse_args()
     try:
         if args.handler is None:

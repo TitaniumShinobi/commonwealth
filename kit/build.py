@@ -9,9 +9,10 @@ from pathlib import Path
 from verify_kit import ARCHIVE, MEMBERS, VERSION, canonical, sha, write
 
 
-def package(directory, entries, revision):
+def package(directory, entries, revision, version=VERSION):
     directory.mkdir()
-    with (directory / ARCHIVE).open("wb") as stream:
+    archive = f"commonwealth-kit-{version}.tar.gz"
+    with (directory / archive).open("wb") as stream:
         with gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as tar:
                 for name in sorted(entries):
@@ -21,10 +22,10 @@ def package(directory, entries, revision):
                     member.mode = 0o755 if name == "bin/commonwealth" else 0o644
                     member.size = len(content)
                     tar.addfile(member, io.BytesIO(content))
-    body = (directory / ARCHIVE).read_bytes()
+    body = (directory / archive).read_bytes()
     manifest = directory / "manifest.json"
-    write(manifest, {"schema": 1, "kit_version": VERSION, "source_revision": revision,
-                     "archive": ARCHIVE, "bytes": len(body), "sha256": sha(body)})
+    write(manifest, {"schema": 1, "kit_version": version, "source_revision": revision,
+                     "archive": archive, "bytes": len(body), "sha256": sha(body)})
 
 
 def main():
@@ -36,6 +37,12 @@ def main():
     entries["release.json"] = canonical({"kit_version": VERSION, "source_revision": revision})
     package(output / "valid", entries, revision)
     package(output / "forbidden", {**entries, "../outside-sentinel": b"forbidden\n"}, revision)
+    for name, version, protocol in (("step9-base", "0.1.0-test.2", 1),
+                                    ("step9-upgrade", "0.1.0-test.3", 1),
+                                    ("step9-incompatible", "0.1.0-test.3", 2)):
+        variant = {**entries, "release.json": canonical({"kit_version": version, "source_revision": revision}),
+                   "profile.json": canonical({"protocol": protocol, "state_schema": 1})}
+        package(output / name, variant, revision, version)
 
 
 if __name__ == "__main__":

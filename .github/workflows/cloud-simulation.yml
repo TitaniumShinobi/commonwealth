@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - step-8-commonwealth-kit
+      - step-9-independent-setup
     paths:
       - .github/workflows/cloud-simulation.yml
 permissions:
@@ -424,3 +424,104 @@ jobs:
           print(json.dumps({"step8_custody": "verified", "artifact_id": os.environ["RECEIPT_ID"],
                             "archive_sha256": os.environ["RECEIPT_SHA"], "members": digests}))
           PY
+      - name: Stage the pinned optional Codex CLI and locate headless Chrome
+        run: |
+          tools="$RUNNER_TEMP/kit-step9-tools"
+          mkdir -p "$tools"
+          asset="https://github.com/openai/codex/releases/download/rust-v0.172.0/codex-x86_64-unknown-linux-musl.tar.gz"
+          if curl --fail --silent --show-error --location --max-time 30 "$asset" -o "$tools/codex.tar.gz"; then
+            echo "a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392  $tools/codex.tar.gz" | sha256sum --check
+            tar -xzf "$tools/codex.tar.gz" -C "$tools" codex-x86_64-unknown-linux-musl
+            host="$(mktemp -d)"
+            chmod 755 "$host"
+            install -m 755 "$tools/codex-x86_64-unknown-linux-musl" "$host/codex"
+            sudo -n install -d -m 700 -o nobody "$host/home"
+            mkdir "$host/workspace"
+            chmod 755 "$host/workspace"
+            sudo -n install -m 600 -o nobody /dev/null "$host/host.json"
+            sha256sum "$host/codex"
+            "$host/codex" --version
+            echo "CW_CODEX=$host/codex" >> "$GITHUB_ENV"
+            echo "CW_HOST_PUBLIC=$host" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Pinned Codex CLI could not be staged"
+          fi
+          chrome="$(command -v google-chrome || command -v chromium || true)"
+          echo "CW_CHROME=$chrome" >> "$GITHUB_ENV"
+          if [[ -n "$chrome" ]]; then "$chrome" --version; fi
+      - name: Run installed Step 9 operations without external egress
+        run: |
+          root="$RUNNER_TEMP/kit-consumer"
+          mkdir "$root/step9"
+          cd "$root/empty"
+          sudo -n ip netns add cw-kit9
+          trap 'sudo -n ip netns del cw-kit9' EXIT
+          sudo -n ip -n cw-kit9 link set lo up
+          sudo -n ip netns exec cw-kit9 runuser -u "$USER" -- \
+            env -i PATH=/usr/bin:/bin HOME="$root/empty" PYTHONDONTWRITEBYTECODE=1 \
+            CW_HOST_PUBLIC="${CW_HOST_PUBLIC:-}" \
+            timeout 150s python3 "$root/bootstrap/step9.py" \
+              --bootstrap "$root/bootstrap" --release "$root/release" --revision "$GITHUB_SHA" \
+              --chrome "${CW_CHROME:-}" --codex "${CW_CODEX:-}" --out "$root/step9/step-9.json"
+      - name: Expose bounded Step 9 observations
+        if: always()
+        run: |
+          root="$RUNNER_TEMP/kit-consumer"
+          python3 - "$root/step9/step-9.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          if not path.is_file():
+              print(json.dumps({"step9": "UNVERIFIED", "reason": "no consumer receipt"}))
+              raise SystemExit(0)
+          data = json.loads(path.read_text())
+          print(json.dumps({key: data[key] for key in ("revision", "verdict", "incomplete", "unverified_gates")}))
+          for offset in range(0, len(data["checks"]), 8):
+              print(json.dumps({"offset": offset, "checks": data["checks"][offset:offset+8]}))
+          for key in ("host", "browser", "extension"):
+              if key in data["detail"]:
+                  print(json.dumps({"scope": key, "evidence": data["detail"][key]})[:16000])
+          PY
+      - name: Preserve Step 9 evidence
+        id: step9_upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kit-step9-consumer
+          path: ${{ runner.temp }}/kit-consumer/step9
+          retention-days: 14
+          if-no-files-found: error
+      - name: Verify archived Step 9 observations
+        if: always() && steps.step9_upload.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECEIPT_ID: ${{ steps.step9_upload.outputs.artifact-id }}
+          RECEIPT_SHA: ${{ steps.step9_upload.outputs.artifact-digest }}
+        run: |
+          root="$RUNNER_TEMP/kit-consumer"
+          for attempt in 1 2 3; do
+            if curl --fail --silent --show-error --location --max-time 15 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$RECEIPT_ID/zip" \
+              -o "$root/step9-receipt.zip"; then break; fi
+            if [[ "$attempt" == 3 ]]; then exit 2; fi
+            sleep 2
+          done
+          echo "${RECEIPT_SHA#sha256:}  $root/step9-receipt.zip" | sha256sum --check
+          python3 - "$root" <<'PY'
+          import hashlib, json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          with zipfile.ZipFile(root / "step9-receipt.zip") as bundle:
+              receipt = bundle.read("step-9.json")
+              if bundle.namelist() != ["step-9.json"] or receipt != (root / "step9/step-9.json").read_bytes():
+                  raise SystemExit("archive member verification failed")
+          print(json.dumps({"step9_custody": "verified", "artifact": os.environ["RECEIPT_ID"],
+                            "sha256": os.environ["RECEIPT_SHA"], "member_sha256": hashlib.sha256(receipt).hexdigest()}))
+          PY
+      - name: Remove disposable optional host
+        if: always()
+        run: |
+          if [[ -n "${CW_HOST_PUBLIC:-}" && "$CW_HOST_PUBLIC" == /tmp/tmp.* ]]; then
+            sudo -n rm -rf -- "$CW_HOST_PUBLIC"
+          fi

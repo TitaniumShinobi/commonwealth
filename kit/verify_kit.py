@@ -16,7 +16,9 @@ VERSION = "0.1.0-test.1"
 ARCHIVE = f"commonwealth-kit-{VERSION}.tar.gz"
 MEMBERS = {"bin/commonwealth", "lib/runtime.py", "lib/simulation_adapter.py", "GUIDE.md",
            "PROTOCOL.md", "ADAPTER.md", "fixtures/conformance.json", "fixtures/simulation.json",
-           "release.json"}
+           "release.json", "STEP9.md", "lib/operator9.py", "lib/bootstrap9.py", "lib/guide9.py",
+           "extension/status_peer.py", "extension/contract.json",
+           "plugin/plugin.json", "plugin/skills/commonwealth-help/SKILL.md", "profile.json"}
 M = 1024 * 1024
 
 
@@ -86,13 +88,17 @@ def verified(inputs):
         if verified_signature.returncode:
             raise Rejected("manifest_signature_invalid")
     metadata = json.loads(signed, object_pairs_hook=checked_pairs)
-    expected = {"schema": 1, "kit_version": VERSION, "source_revision": inputs["revision"], "archive": ARCHIVE}
+    version = inputs.get("version", VERSION)
+    archive_name = f"commonwealth-kit-{version}.tar.gz"
+    if version not in (VERSION, "0.1.0-test.2", "0.1.0-test.3"):
+        raise Rejected("release_coordinates_mismatch")
+    expected = {"schema": 1, "kit_version": version, "source_revision": inputs["revision"], "archive": archive_name}
     if (set(metadata) != {*expected, "bytes", "sha256"}
             or any(metadata.get(k) != v for k, v in expected.items())
             or not re.fullmatch(r"[a-f0-9]{40}", inputs["revision"])):
         raise Rejected("release_coordinates_mismatch")
     archive = Path(inputs["archive"])
-    if archive.name != ARCHIVE:
+    if archive.name != archive_name:
         raise Rejected("archive_name_mismatch")
     body = get(archive, 4 * M)
     if type(metadata["bytes"]) is not int or metadata["bytes"] != len(body) or metadata["sha256"] != sha(body):
@@ -124,7 +130,7 @@ def plan(args):
     target = str(Path(args.target).resolve())
     inputs = {name: str(Path(getattr(args, name)).resolve())
               for name in ("manifest", "signature", "archive", "trust_root")}
-    inputs.update(fingerprint=args.fingerprint, revision=args.revision)
+    inputs.update(fingerprint=args.fingerprint, revision=args.revision, version=args.version)
     metadata, _, manifest, fingerprint = verified(inputs)
     return {"actor": "fixture-install-operator", "action": "install", "target": target,
             "release_sha256": metadata["sha256"], "manifest_sha256": manifest,
@@ -192,6 +198,7 @@ def main():
     planned = commands.add_parser("plan")
     for name in ("manifest", "signature", "archive", "trust-root", "target", "out", "revision", "fingerprint"):
         planned.add_argument(f"--{name}", required=True)
+    planned.add_argument("--version", default=VERSION)
     applied = commands.add_parser("apply")
     applied.add_argument("--plan", required=True)
     applied.add_argument("--target", required=True)
