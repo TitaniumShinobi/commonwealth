@@ -53,6 +53,7 @@ def summarize(dispatches, records, fixture, lifecycle):
     observed_by_id = {(row["principal"], row["id"], row["actor"]): row for row in records}
     compared = set(expected_by_id) == set(observed_by_id) and len(observed_by_id) == len(records)
     unauthorized, founder, unaccounted = 0, 0, 0
+    unexpected = []
     attempts, rejections, effects = 0, 0, 0
     for key, row in observed_by_id.items():
         envelope, reply = expected_by_id.get(key, ({}, {}))
@@ -85,16 +86,21 @@ def summarize(dispatches, records, fixture, lifecycle):
             explicit = checks.get(f'{row["actor"]}/{op}', checks.get(op))
             # For the actual disclosure boundary the peer's correlated read result
             # is the reference criterion. An unplanned release is always a violation.
+            if op == "publish" and not explicit and checks.get("binding", {}).get("decision") == "binding_accepted":
+                binding = checks["binding"]["binding"]
+                if all(observation.get(field) == value for field, value in binding.items()):
+                    explicit = {"decision": "published"}
             if op == "disclose":
                 explicit = checks.get("read_result")
             if (not explicit or explicit["decision"] != row["decision"]
                     or (disclosed and explicit.get("disclosed") is not True)):
                 unauthorized += 1
+                unexpected.append({field: row[field] for field in ("principal", "operation", "decision", "tick")})
     lifecycle_ok = [(e["lifecycle"], e["tick"]) for e in lifecycle] == [
         ("old_host_reaped", 10), ("clean_host_started", 12)]
     return {"reconciled": compared and lifecycle_ok, "attempts": attempts,
             "rejections": rejections, "recorded_effects": effects,
-            "unauthorized_effects": unauthorized, "founder_or_delegate_effects": founder,
+            "unauthorized_effects": unauthorized, "unexpected_boundary_effects": unexpected, "founder_or_delegate_effects": founder,
             "unaccounted_effects": unaccounted, "dispatches": len(expected_by_id),
             "journal_entries": len(records), "window": [0, fixture["end"]],
             "inventory_sha256": digest({k: sorted(v) for k, v in CAPABILITIES.items()})}
