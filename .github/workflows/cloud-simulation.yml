@@ -440,7 +440,7 @@ jobs:
             mkdir "$host/workspace"
             chmod 755 "$host/workspace"
             sudo -n install -m 600 -o nobody /dev/null "$host/host.json"
-            sha256sum "$host/codex"
+            echo "ad83b94c093f0cdd8176a6bc8005a461bdf23a759863e157d40f562b8a9d664d  $host/codex" | sha256sum --check
             "$host/codex" --version
             echo "CW_CODEX=$host/codex" >> "$GITHUB_ENV"
             echo "CW_HOST_PUBLIC=$host" >> "$GITHUB_ENV"

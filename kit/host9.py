@@ -4,6 +4,7 @@ import os
 import selectors
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -16,8 +17,9 @@ def main():
     env = {"HOME": str(root / "home"), "CODEX_HOME": str(root / "home/.codex"),
            "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
     command = [binary, "app-server"]
+    errors = tempfile.TemporaryFile()
     process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+                               stdout=subprocess.PIPE, stderr=errors, bufsize=0)
     rows = []
     pending = bytearray()
 
@@ -71,6 +73,9 @@ def main():
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+    errors.seek(0)
+    result["diagnostic"] = errors.read(2048).decode(errors="replace")
+    errors.close()
     result["messages"] = rows
     Path(output).write_text(json.dumps(result))
 

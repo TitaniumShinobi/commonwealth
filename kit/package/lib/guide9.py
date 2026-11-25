@@ -3,6 +3,7 @@ import hashlib
 import html
 import http.server
 import json
+import os
 import secrets
 import time
 from pathlib import Path
@@ -109,7 +110,6 @@ def serve(directory, ready, seconds=45):
     with http.server.HTTPServer(("127.0.0.1", 0), Handler) as server:
         host = f"127.0.0.1:{server.server_port}"
         path = Path(ready)
-        with path.open("x") as out:
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as out:
             out.write(json.dumps({"url": f"http://{host}/launch?token={launch}"}))
-        path.chmod(0o600)
         server.serve_forever()

@@ -164,20 +164,26 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
     (scripted / "private-canary").write_text(canary)
     details = {"diagnostic": diagnostic}
     if chrome:
-        address = root / "guide-ready"
-        guide, ready = start([binary, "operator", "guide", "--authority", guided, "--ready", address], address)
-        try:
-            # Browser commands contain a private one-time launch URL and are omitted from receipts.
-            browser = subprocess.run([os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome, ready["url"], str(target)],
-                                     capture_output=True, timeout=20)
-            if browser.returncode:
-                details["browser"] = {"verdict": "UNVERIFIED", "reason": "browser fixture exited unsuccessfully"}
-            else:
+        for attempt in range(2):
+            address = root / f"guide-ready-{attempt}"
+            guide, ready = start([binary, "operator", "guide", "--authority", guided, "--ready", address], address)
+            try:
+                browser = subprocess.run(
+                    [os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome, ready["url"], str(target)],
+                    capture_output=True, timeout=20)
+                if browser.returncode:
+                    diagnostic = browser.stderr.decode(errors="replace").replace(ready["url"], "<private launch URL>")
+                    details["browser"] = {"verdict": "UNVERIFIED", "reason": "browser process failed",
+                                          "diagnostic": diagnostic[-1400:]}
+                    continue
                 details["browser"] = json.loads(browser.stdout)
                 check("browser_setup_parity", operate(binary, scripted, "inspect")["settings"],
-                  operate(binary, guided, "inspect")["settings"])
-        finally:
-            stop(guide)
+                      operate(binary, guided, "inspect")["settings"])
+                break
+            except subprocess.TimeoutExpired:
+                details["browser"] = {"verdict": "UNVERIFIED", "reason": "browser process timed out"}
+            finally:
+                stop(guide)
     else:
         details["browser"] = {"verdict": "UNVERIFIED", "reason": "headless browser unavailable"}
 
