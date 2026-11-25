@@ -4,6 +4,7 @@ import http.client
 import http.server
 import json
 import os
+import secrets
 import socket
 import socketserver
 import ssl
@@ -18,7 +19,7 @@ from bell import STATES, trial
 ROOT = Path(sys.argv[1])
 RUN = os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]
 HOST = "lab.example"
-TOKEN = "fixture-lab-operator"
+TOKEN = secrets.token_urlsafe(32)
 RECEIPTS = []
 lock = threading.Lock()
 PAGE = b"""<!doctype html><html><title>Commonwealth simulation</title>
@@ -27,7 +28,7 @@ PAGE = b"""<!doctype html><html><title>Commonwealth simulation</title>
 ASSET = b"""document.querySelector('#run').onclick = async () => {
 const trial = new URL(location.href).searchParams.get('trial');
 const response = await fetch('/experiment', {method:'POST', headers:{'Content-Type':'application/json',
-'Authorization':'Bearer fixture-lab-operator'},body:JSON.stringify({trial})});
+},body:JSON.stringify({trial})});
 document.querySelector('#result').textContent = JSON.stringify({status:response.status, ...await response.json()});
 };"""
 CASES = {f"ideal-{i}": (label, "ideal") for i, label in enumerate(STATES)}
@@ -98,7 +99,7 @@ class Origin(HTTP):
             return self.respond(400, b"{}", "application/json")
         data = json.loads(self.rfile.read(length))
         identifier = data.get("trial")
-        granted = self.headers.get("Authorization") == f"Bearer {TOKEN}" and identifier in CASES
+        granted = secrets.compare_digest(self.headers.get("Cookie", ""), f"lab_session={TOKEN}") and identifier in CASES
         note("authorization", trial_id=identifier, decision="allowed" if granted else "denied")
         if not granted:
             return self.respond(403, b'{"terminal":"denied"}', "application/json")
@@ -116,18 +117,21 @@ class Gateway(HTTP):
         if not 0 <= length <= 512:
             return self.respond(400, b"", "text/plain")
         headers = {"Host": "origin.example"}
-        for field in ("Authorization", "Content-Type"):
+        for field in ("Cookie", "Content-Type"):
             if self.headers.get(field):
                 headers[field] = self.headers[field]
         request = http.client.HTTPSConnection("localhost", origin.server_port, context=origin_trust, timeout=10)
         try:
             request.connect()
             peer = hashlib.sha256(request.sock.getpeercert(binary_form=True)).hexdigest()
-            request.request(self.command, self.path, body=self.rfile.read(length) if length else None, headers=headers)
+            body = self.rfile.read(length) if length else None
+            identifier = json.loads(body).get("trial") if body and self.path == "/experiment" else None
+            request.request(self.command, self.path, body=body, headers=headers)
             upstream = request.getresponse()
             data = upstream.read()
             note("gateway", ingress=self.headers["Host"], origin="origin.example", origin_port=origin.server_port,
-                 origin_certificate_sha256=peer, method=self.command, path=self.path, status=upstream.status)
+                 origin_certificate_sha256=peer, method=self.command, path=self.path, status=upstream.status,
+                 trial_id=identifier, client_port=self.client_address[1])
             self.respond(upstream.status, data, upstream.getheader("Content-Type", "application/json"))
         finally:
             request.close()
@@ -141,7 +145,7 @@ def tls(server, role, certificate):
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(ROOT / (certificate + ".pem"), ROOT / (certificate + ".key"))
     def sni(channel, name, _):
-        note("tls", role=role, sni=name, port=server.server_port)
+        note("tls", role=role, sni=name, port=server.server_port, client_port=channel.getpeername()[1])
         if name != (HOST if role == "gateway" else "localhost"):
             return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
     context.set_servername_callback(sni)
@@ -164,7 +168,7 @@ with socketserver.ThreadingUDPServer(("127.0.0.1", 53), DNS) as dns, \
         threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         subprocess.run([sys.argv[2], str(Path(__file__).with_name("browser.mjs")), sys.argv[3], str(ROOT), RUN],
-                       check=True, timeout=95)
+                       check=True, timeout=95, env={**os.environ, "CW11_BROWSER_SESSION": TOKEN})
         browser = json.loads((ROOT / "browser.json").read_text())
         require(browser["typed"] == "https://lab.example", "typed address")
         require(browser["denied"] == 403 and len(browser["trials"]) == len(CASES), "authorization and all trials")
@@ -174,12 +178,20 @@ with socketserver.ThreadingUDPServer(("127.0.0.1", 53), DNS) as dns, \
         require(any(r["layer"] == "tls" and r["role"] == "origin" for r in RECEIPTS), "separate origin TLS")
         require(any(r["layer"] == "origin" and r["path"] == "/app.js" and r["status"] == 200 for r in RECEIPTS),
                 "actual origin asset")
+        require(any(r["layer"] == "authorization" and r["trial_id"] == "unauthorized" and
+                    r["decision"] == "denied" for r in RECEIPTS), "origin denied unauthenticated trial")
         for identifier, evidence in browser["trials"].items():
             label, mode = CASES[identifier]
             observed = evidence["result"]
             require(evidence["page"] == "Simulation" and evidence["status"] == 200, f"{identifier}: loaded and posted")
             require(evidence["security"]["protocol"].startswith("TLS") and evidence["security"]["subjectName"] == HOST
                     and evidence["security"]["issuer"] == "Commonwealth Step 11 Fixture CA", f"{identifier}: trusted certificate")
+            ingress = [r for r in RECEIPTS if r["layer"] == "gateway" and r.get("trial_id") == identifier
+                       and r["method"] == "POST" and r["status"] == 200]
+            require(len(ingress) == 1 and any(r["layer"] == "tls" and r["role"] == "gateway" and
+                    r["client_port"] == ingress[0]["client_port"] for r in RECEIPTS), f"{identifier}: POST and ingress TLS")
+            require(any(r["layer"] == "authorization" and r["trial_id"] == identifier and
+                        r["decision"] == "allowed" for r in RECEIPTS), f"{identifier}: authorized origin")
             require(observed["run_id"] == RUN and observed["trial_id"] == identifier, f"{identifier}: correlation")
             require(observed == trial(RUN, identifier, label, mode), f"{identifier}: deterministic replay")
             require(observed["terminal"] == {"missing": "classical_bits_expired", "unavailable": "quantum_link_unavailable"}

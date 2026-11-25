@@ -69,6 +69,9 @@ try {
   await click("#go");
   await until(() => value("document.querySelector('h1')?.textContent === 'Simulation'"), "typed navigation failed");
   evidence.denied = await value("fetch('/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trial:'unauthorized'})}).then(r=>r.status)");
+  const session = await send("Network.setCookie", {name: "lab_session",
+    value: process.env.CW11_BROWSER_SESSION, url: destination, secure: true, httpOnly: true, sameSite: "Strict"});
+  if (!session.result?.success) throw Error("fixture browser authorization could not be provisioned");
   for (const trial of ["ideal-0","ideal-1","ideal-2","ideal-3","ideal-4","ideal-5","dephasing","missing","unavailable"]) {
     const url = destination + "/?trial=" + trial;
     await send("Page.navigate", {url});
