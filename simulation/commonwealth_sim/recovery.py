@@ -24,7 +24,7 @@ class Recovery:
         self.store_path = directory / "records.json"
         if role == "a-application" and self.host == OLD:
             self.store_path.write_bytes(wire.encode({"records": {"record-01": "commonwealth-fixture-v1"},
-                                                     "data_tick": 8, "restore": None}))
+                                                     "data_tick": 0, "version": 1, "restore": None}))
         self.fences = {name: 1 for name in FENCE_ROLES}
         self.readback = {name: True for name in FENCE_ROLES}
         # Journals are preserved independently of each recovered active checkpoint.
@@ -52,7 +52,7 @@ class Recovery:
                                         "credential": "token:other", "buffer": None}}
         self.cross_effects = 0
         self.unrelated_operations = []
-        self.audit = []
+        self.ledger = directory / "boundary-ledger.ndjson"
 
     def sign(self, purpose, value):
         key = self.config["recovery_keys"][purpose]
@@ -65,10 +65,10 @@ class Recovery:
         return {"sender": sender, "recipient": recipient, "purpose": "recovery",
                 "payload": {"op": op, **kwargs}}
 
-    def apply(self, sender, tick, p):
+    def apply(self, sender, tick, p, message_id):
         routes = {
             "a-authority": {
-                "enroll": "op-a", "capture": "backup-owner", "backup": "old-host",
+                "enroll": "op-a", "capture": "backup-owner", "version_verified": "fixture-observer", "backup": "old-host",
                 "loss": "00-lifecycle", "fence": FENCE_ROLES.get(p.get("boundary")),
                 "withdraw": "authz-owner", "approve": "restore-owner",
                 "restore": "a-steward", "restore_result": "new-host",
@@ -81,22 +81,40 @@ class Recovery:
                 "cross_queue": "op-b", "cross_use": "op-b", "renew": "authz-owner",
                 "audit_state": "fixture-observer", "authority_state": "fixture-observer",
             },
-            "a-application": {"snapshot": "backup-owner", "restore_commit": "restore-owner",
+            "a-application": {"source_commit": "00-source", "version_readback": "fixture-observer", "snapshot": "backup-owner", "restore_commit": "restore-owner",
                               "store_state": "fixture-observer", "read_store": "serve-gate"},
-            "b": {"enroll": "op-b", "binding": ("publisher", "sim-controller"),
+            "b": {"observe_version": "old-host", "enroll": "op-b", "binding": ("publisher", "sim-controller"),
                   "read": "op-b", "read_result": "serve-gate", "peer_state": "fixture-observer",
                   "control_commit": "fixture-observer", "control_read": "fixture-observer"},
         }
         op = p["op"]
         allowed = "fixture-observer" if op == "audit_state" else routes.get(self.role, {}).get(op)
+        before = self.state_digest()
         if not allowed or sender not in ((allowed,) if isinstance(allowed, str) else allowed):
             result, messages = {"decision": "role_denied"}, []
         else:
             result, messages = getattr(self, "accept_binding" if op == "binding" else op)(tick, p)
-        if op in PRIVILEGED or sender == "founder":
-            self.audit.append({"tick": tick, "sender": sender, "operation": op,
-                               "target": self.role, "decision": result["decision"]})
-        return {"observation": result, "emit": messages}
+        reply = {"observation": result, "emit": messages}
+        if op != "audit_state":
+            row = {"actor": self.role, "principal": sender, "id": message_id, "operation": op,
+                   "tick": tick, "decision": result["decision"], "request_sha256": digest(p),
+                   "reply_sha256": digest({"decision": "accepted", **reply}),
+                   "pre_state_sha256": before, "post_state_sha256": self.state_digest(),
+                   "disclosed": result.get("disclosed", False)}
+            with self.ledger.open("ab") as output:
+                output.write(wire.encode(row) + b"\n")
+        return reply
+
+    def state_digest(self):
+        names = ("fences", "readback", "journal", "current", "approved", "backup_data",
+                 "restored", "lost", "active", "credential", "writes", "enrolled", "trust",
+                 "policy", "binding", "floor", "controls", "crossings",
+                 "cross_effects", "unrelated_operations", "observed_version")
+        state = {name: getattr(self, name, None) for name in names}
+        if self.store_path.is_file():
+            state["application_store"] = wire.decode(self.store_path.read_bytes())
+        state["uncertain"] = sorted(self.uncertain)
+        return digest(state)
 
     def enroll(self, tick, p):
         peer = "op-a" if self.role == "b" else "op-b"
@@ -105,13 +123,48 @@ class Recovery:
         self.enrolled = True
         return {"decision": "enrolled", "peer": peer}, []
 
+    def source_commit(self, tick, p):
+        if self.host != OLD or self.role != "a-application":
+            return {"decision": "source_commit_denied"}, []
+        previous = wire.decode(self.store_path.read_bytes())
+        if previous["data_tick"] >= tick:
+            return {"decision": "source_commit_denied"}, []
+        updated = {**previous, "data_tick": tick, "version": previous["version"] + 1}
+        staged = self.store_path.with_suffix(".source")
+        staged.write_bytes(wire.encode(updated))
+        staged.replace(self.store_path)
+        return {"decision": "source_committed", "tick": tick,
+                "version": updated["version"], "version_digest": digest(updated)}, [
+            self.emit("fixture-observer", "a-application", "version_readback")]
+
+    def version_readback(self, tick, p):
+        data = wire.decode(self.store_path.read_bytes())
+        return {"decision": "source_read_back", "data_tick": data["data_tick"],
+                "version": data["version"], "version_digest": digest(data)}, [
+            self.emit("old-host", "b", "observe_version", version=data, version_digest=digest(data))]
+
+    def observe_version(self, tick, p):
+        state = p["version"]
+        if state["data_tick"] != tick or digest(state) != p["version_digest"]:
+            return {"decision": "version_observation_denied"}, []
+        evidence = {"data_tick": state["data_tick"], "version": state["version"],
+                    "version_digest": p["version_digest"]}
+        return {"decision": "version_observed", **evidence}, [
+            self.emit("fixture-observer", "a-authority", "version_verified", **evidence)]
+
+    def version_verified(self, tick, p):
+        self.observed_version = {k: p[k] for k in ("data_tick", "version", "version_digest")}
+        return {"decision": "version_verified", **self.observed_version}, [
+            self.emit("backup-owner", "a-authority", "capture")]
+
     def capture(self, tick, p):
         return {"decision": "snapshot_requested"}, [self.emit("backup-owner", "a-application", "snapshot")]
 
     def snapshot(self, tick, p):
         state = wire.decode(self.store_path.read_bytes())
         manifest = {"service": SERVICE, "source": self.host, "data_tick": state["data_tick"],
-                    "digest": digest(state["records"])}
+                    "digest": digest(state["records"]), "version": state["version"],
+                    "version_digest": digest(state)}
         return {"decision": "snapshot_read", "manifest": manifest}, [
             self.emit("old-host", "a-authority", "backup", manifest=self.sign("backup", manifest),
                       records=state["records"])]
@@ -121,7 +174,9 @@ class Recovery:
         manifest = envelope["data"]
         if (not self.verify("backup", envelope) or manifest["source"] != OLD
                 or manifest["service"] != SERVICE or manifest["data_tick"] > tick
-                or manifest["digest"] != digest(p["records"])):
+                or manifest["digest"] != digest(p["records"])
+                or getattr(self, "observed_version", None) != {
+                    k: manifest[k] for k in ("data_tick", "version", "version_digest")}):
             return {"decision": "backup_denied"}, []
         self.backup_data = {"manifest": envelope, "records": p["records"]}
         self.directory.joinpath("backup.json").write_bytes(wire.encode(self.backup_data))
@@ -193,7 +248,8 @@ class Recovery:
             return {"decision": "commit_denied"}, []
         if not self.store_path.exists():
             state = {"records": p["records"], "data_tick": manifest["data_tick"],
-                     "restore": approval, "commits": 1}
+                     "restore": approval, "commits": 1, "version": manifest["version"],
+                     "source_version_digest": manifest["version_digest"]}
             staged = self.store_path.with_suffix(".next")
             with staged.open("xb") as stream:
                 stream.write(wire.encode(state))
@@ -210,7 +266,8 @@ class Recovery:
         persisted = wire.decode(self.store_path.read_bytes())
         result = {"decision": decision, "host": self.host, "commits": persisted["commits"],
                   "operation": approval["operation"], "data_tick": persisted["data_tick"],
-                  "digest": digest(persisted["records"]), "clean_prestate": decision == "restored"}
+                  "digest": digest(persisted["records"]), "source_version_digest": persisted["source_version_digest"],
+                  "clean_prestate": decision == "restored"}
         return result, [self.emit("new-host", "a-authority", "restore_result", result=result)]
 
     def restore_result(self, tick, p):
@@ -331,14 +388,16 @@ class Recovery:
         principal = "old-host" if self.host == OLD else "new-host"
         return {"decision": "store_read", "host": self.host, "data_digest": digest(state["records"])}, [
             self.emit(principal, "a-authority", "disclose", user=p["user"], target=p["target"],
-                      records=state["records"], data_tick=state["data_tick"])]
+                      records=state["records"], data_tick=state["data_tick"],
+                      source_version_digest=state.get("source_version_digest", digest(state)))]
 
     def disclose(self, tick, p):
         target = p["target"]
         decision = self.access_decision(tick, p["user"], target)
         result = {"decision": decision, "host": target["host"], "disclosed": decision == "allowed"}
         if decision == "allowed":
-            result.update(records=p["records"], data_tick=p["data_tick"], revision=target["generation"])
+            result.update(records=p["records"], data_tick=p["data_tick"], revision=target["generation"],
+                          source_version_digest=p["source_version_digest"])
         return result, [self.emit("serve-gate", "b", "read_result", result=result)]
 
     def read_result(self, tick, p):
@@ -425,4 +484,8 @@ class Recovery:
                 "state_digest": digest(self.current)}, []
 
     def audit_state(self, tick, p):
-        return {"decision": "audited", "events": list(self.audit), "role": self.role}, []
+        rows = self.ledger.read_bytes().splitlines() if self.ledger.exists() else []
+        offset = p.get("offset", 0)
+        page = [wire.decode(row) for row in rows[offset:offset + 8]]
+        return {"decision": "audited", "events": page, "role": self.role,
+                "offset": offset, "total": len(rows)}, []

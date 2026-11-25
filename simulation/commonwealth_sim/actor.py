@@ -157,7 +157,7 @@ class Actor:
             return {"decision": "accepted", "role": self.role,
                     "state_directory": str(self.directory), "limits": list(resource.getrlimit(resource.RLIMIT_AS))}
         if purpose == "recovery":
-            return {"decision": "accepted", **self.recovery.apply(sender, tick, envelope["payload"])}
+            return {"decision": "accepted", **self.recovery.apply(sender, tick, envelope["payload"], envelope["id"])}
         if purpose == "household":
             return {"decision": "accepted", **self.household.apply(sender, tick, envelope["payload"])}
         if purpose == "federation":

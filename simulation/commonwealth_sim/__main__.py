@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from .actor import LINE, MEMORY, decode, encode, tag
+from .recovery_audit import summarize
 
 BASELINE = "6c2dbf2a79daea32ecafd51d56eae0d9f35dd8d3"
 ROLES = ("a-authority", "a-application", "b", "access")
@@ -285,48 +286,43 @@ class Case:
         self.score_recovery(fixture)
 
     def audit_actor(self, tick, role):
-        request = self.envelope(tick, role, "fixture-observer", "recovery", {"op": "audit_state"})[3]
-        request["envelope"]["phase"] = "post_close_probe"
-        request["tag"] = tag(self.topology["keys"]["fixture-observer"]["recovery"], request["envelope"])
-        return self.call(role, request)
+        offset = 0
+        while True:
+            request = self.envelope(tick, role, "fixture-observer", "recovery",
+                                    {"op": "audit_state", "offset": offset})[3]
+            request["envelope"]["phase"] = "post_close_probe"
+            request["tag"] = tag(self.topology["keys"]["fixture-observer"]["recovery"], request["envelope"])
+            result = self.call(role, request).get("observation", {})
+            if result.get("decision") != "audited" or result.get("offset") != offset:
+                raise RuntimeError("actor ledger page unavailable")
+            total, count = result["total"], len(result["events"])
+            offset += count
+            if offset == total:
+                return
+            if count == 0 or offset > total:
+                raise RuntimeError("actor ledger coverage incomplete")
 
     def score_recovery(self, fixture):
-        observations = [e for e in self.trace if
-                        (e.get("request") or {}).get("kind") == "deliver"]
-        audited = [e for e in observations if e["request"]["envelope"]["payload"]["op"] == "audit_state"]
-        verified = [e for e in audited if e["reply"].get("observation", {}).get("decision") == "audited"]
-        sources = {(e["actor"], e["request"]["envelope"]["tick"]) for e in verified}
-        end = fixture["end"]
-        expected_sources = {(role, end) for role in ("a-authority", "a-application", "b")}
-        expected_sources.add(("a-application", 9))
+        observations = [e for e in self.trace if (e.get("request") or {}).get("kind") == "deliver"]
+        pages = [e for e in observations if e["request"]["envelope"]["payload"]["op"] == "audit_state"]
+        records = [row for e in pages for row in e["reply"]["observation"]["events"]]
         lifecycle = [e for e in self.trace if "lifecycle" in e]
-        covered = (sources == expected_sources and
-                   [(e["lifecycle"], e["tick"]) for e in lifecycle] ==
-                   [("old_host_reaped", 10), ("clean_host_started", 12)])
-        if not covered:
-            raise RuntimeError("privileged audit coverage incomplete")
-        self.check(end, "audit_coverage", {"complete": True},
-                   {"complete": True, "sources_and_ticks": sorted(sources)})
-        privileged = [e["reply"]["observation"]["events"] for e in verified]
-        founder = sum(item["sender"] == "founder" and item["decision"] != "role_denied"
-                      for events in privileged for item in events)
-        self.check(fixture["end"], "founder_privileged_interventions", {"count": 0},
-                   {"count": founder, "sources": sorted(sources), "window": [0, fixture["end"]],
-                    "lifecycle": [e for e in self.trace if "lifecycle" in e]})
-        negatives = [check for check in self.results if check["expected"].get("disclosed") is False
-                     or check["expected"].get("committed") is False
-                     or check["expected"].get("decision") in
-                     ("rejoin_denied", "integrity_denied", "publication_closed",
-                      "publisher_uncertain", "issuer_uncertain", "binding_rollback_denied")]
-        successes = sum(check["observed"] is not None and (
-                        check["observed"].get("disclosed") is True
-                        or check["observed"].get("committed") is True
-                        or check["observed"].get("decision") in
-                        ("binding_accepted", "restore_admitted", "published", "credential_issued"))
-                        for check in negatives)
-        self.check(fixture["end"], "unauthorized_effects", {"successes": 0},
-                   {"successes": successes, "attempts": len(negatives),
-                    "observed_rejections": sum(check["matches"] for check in negatives)})
+        accounting = summarize(observations, records, fixture, lifecycle)
+        self.check(fixture["end"], "modeled_audit_and_effect_accounting",
+                   {"reconciled": True, "unauthorized_effects": 0,
+                    "founder_or_delegate_effects": 0, "unaccounted_effects": 0}, accounting)
+        # Exercise the independent scorer on an intentionally different ledger,
+        # retaining the genuine trace and audit records in the original receipt.
+        template = next(row for row in records if row["operation"] == "issue"
+                        and row["decision"] == "credential_issued") if any(
+                           row["operation"] == "issue" and row["decision"] == "credential_issued"
+                           for row in records) else records[0]
+        anomaly = {**template, "principal": "founder-delegate", "id": "unaccounted-test",
+                   "post_state_sha256": "forced-scoring-test-change"}
+        challenged = summarize(observations, [*records, anomaly], fixture, lifecycle)
+        self.check(fixture["end"], "scorer_rejects_delegate_and_unaccounted_effect",
+                   {"reconciled": False, "founder_or_delegate_effects": 1,
+                    "unaccounted_effects": 1}, challenged)
         if fixture.get("score_restore"):
             baseline = next((x["observed"] for x in self.results if x["criterion"] == "peer_state"), None)
             ending = next((x["observed"] for x in reversed(self.results)
@@ -336,13 +332,19 @@ class Case:
                               and e["reply"]["observation"].get("disclosed")
                               and e["reply"]["observation"].get("host") == "a-host-2"), None)
             lost = next((e["tick"] for e in self.trace if e.get("lifecycle") == "old_host_reaped"), None)
-            verified = retrieval is not None and lost is not None
+            version = next((e["reply"]["observation"] for e in observations
+                            if e["request"]["envelope"]["payload"]["op"] == "observe_version"), None)
+            verified = bool(retrieval and version and lost is not None
+                            and retrieval.get("source_version_digest") == version.get("version_digest")
+                            and retrieval["data_tick"] == version["data_tick"])
+
             recovery_time = retrieval["tick"] - lost if verified else None
-            age = lost - retrieval["data_tick"] if verified else None
+            age = lost - version["data_tick"] if verified else None
             self.check(fixture["end"], "restore_limits", {"met": True},
                        {"met": verified and recovery_time <= 5 and 0 <= age <= 2,
                         "loss_tick": lost, "retrieval_tick": retrieval and retrieval["tick"],
-                        "data_tick": retrieval and retrieval["data_tick"], "recovery_time": recovery_time,
+                        "data_tick": version and version["data_tick"], "source_version": version,
+                        "recovery_time": recovery_time,
                         "restored_data_age": age, "max_recovery_time": 5, "max_data_age": 2})
             unchanged = bool(baseline and ending and
                              all(baseline[k] == ending[k] for k in ("trust_digest", "policy_digest"))
@@ -404,7 +406,7 @@ def main():
     args = parser.parse_args()
     revision = os.getenv("CHECKOUT_SHA")
     directory = args.out.parent if args.command == "smoke" else args.out
-    manifest = {"baseline": BASELINE, "checkout_sha": revision, "dispatch_sha": os.getenv("GITHUB_SHA"),
+    manifest = {"design_baseline": BASELINE, "implementation_parent": "061967633e433beaf25b754e573d5f7564589b36", "checkout_sha": revision, "dispatch_sha": os.getenv("GITHUB_SHA"),
                 "workflow_ref": os.getenv("GITHUB_WORKFLOW_REF"), "workflow_sha": os.getenv("GITHUB_WORKFLOW_SHA"),
                 "checkout_action_sha": os.getenv("CHECKOUT_ACTION_SHA"),
                 "upload_action_sha": os.getenv("UPLOAD_ACTION_SHA"),
