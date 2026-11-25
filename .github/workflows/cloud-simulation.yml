@@ -466,7 +466,7 @@ jobs:
             timeout 150s python3 "$root/bootstrap/step9.py" \
               --bootstrap "$root/bootstrap" --release "$root/release" --revision "$GITHUB_SHA" \
               --chrome "${CW_CHROME:-}" --codex "${CW_CODEX:-}" --out "$root/step9/step-9.json"
-      - name: Expose bounded Step 9 and optional host observations
+      - name: Expose Step 9 and local App Server observations
         if: always()
         run: |
           root="$RUNNER_TEMP/kit-consumer"

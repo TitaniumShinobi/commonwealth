@@ -16,7 +16,8 @@ def main():
     marketplace = cwd / ".agents/plugins/marketplace.json"
     env = {"HOME": str(root / "home"), "CODEX_HOME": str(root / "home/.codex"),
            "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
-    command = [binary, "app-server"]
+    Path(env["CODEX_HOME"]).mkdir(mode=0o700)
+    command = [binary, "app-server", "--listen", "stdio://"]
     errors = tempfile.TemporaryFile()
     process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=errors, bufsize=0)
