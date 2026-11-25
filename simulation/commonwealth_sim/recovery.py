@@ -88,7 +88,7 @@ class Recovery:
                   "control_commit": "fixture-observer", "control_read": "fixture-observer"},
         }
         op = p["op"]
-        allowed = routes.get(self.role, {}).get(op)
+        allowed = "fixture-observer" if op == "audit_state" else routes.get(self.role, {}).get(op)
         if not allowed or sender not in ((allowed,) if isinstance(allowed, str) else allowed):
             result, messages = {"decision": "role_denied"}, []
         else:
@@ -420,6 +420,7 @@ class Recovery:
         return {"decision": "authority_state", "active": self.active, "fences": dict(self.fences),
                 "readback": dict(self.readback), "writes": self.writes, "restored": self.restored,
                 "uncertain": sorted(self.uncertain), "crossings": self.crossings,
+                "cross_effects": self.cross_effects,
                 "unrelated_operations": list(self.unrelated_operations),
                 "state_digest": digest(self.current)}, []
 

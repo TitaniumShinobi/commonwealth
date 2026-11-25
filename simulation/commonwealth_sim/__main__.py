@@ -225,6 +225,7 @@ class Case:
     def lifecycle(self, tick, command, root):
         role = "a-application"
         if command == "lose":
+            self.audit_actor(tick - 1, role)
             child = self.children.pop(role)
             child.finish(False)
             observation = child.reap(time.monotonic() + 2)
@@ -280,20 +281,33 @@ class Case:
                 self.check(tick, name, {"decision": decision, "operation": operation, "count": tick + 1}, result)
         tick = fixture["end"]
         for role in ("a-authority", "a-application", "b"):
-            envelope = self.envelope(tick, role, "fixture-observer", "recovery", {"op": "audit_state"})[3]
-            envelope["envelope"]["phase"] = "post_close_probe"
-            envelope["tag"] = tag(self.topology["keys"]["fixture-observer"]["recovery"], envelope["envelope"])
-            self.call(role, envelope)
+            self.audit_actor(tick, role)
         self.score_recovery(fixture)
+
+    def audit_actor(self, tick, role):
+        request = self.envelope(tick, role, "fixture-observer", "recovery", {"op": "audit_state"})[3]
+        request["envelope"]["phase"] = "post_close_probe"
+        request["tag"] = tag(self.topology["keys"]["fixture-observer"]["recovery"], request["envelope"])
+        return self.call(role, request)
 
     def score_recovery(self, fixture):
         observations = [e for e in self.trace if
                         (e.get("request") or {}).get("kind") == "deliver"]
         audited = [e for e in observations if e["request"]["envelope"]["payload"]["op"] == "audit_state"]
-        sources = {e["actor"] for e in audited}
-        matches = sources == {"a-authority", "a-application", "b"}
-        self.check(fixture["end"], "audit_coverage", {"complete": True}, {"complete": matches})
-        privileged = [e["reply"]["observation"]["events"] for e in audited]
+        verified = [e for e in audited if e["reply"].get("observation", {}).get("decision") == "audited"]
+        sources = {(e["actor"], e["request"]["envelope"]["tick"]) for e in verified}
+        end = fixture["end"]
+        expected_sources = {(role, end) for role in ("a-authority", "a-application", "b")}
+        expected_sources.add(("a-application", 9))
+        lifecycle = [e for e in self.trace if "lifecycle" in e]
+        covered = (sources == expected_sources and
+                   [(e["lifecycle"], e["tick"]) for e in lifecycle] ==
+                   [("old_host_reaped", 10), ("clean_host_started", 12)])
+        if not covered:
+            raise RuntimeError("privileged audit coverage incomplete")
+        self.check(end, "audit_coverage", {"complete": True},
+                   {"complete": True, "sources_and_ticks": sorted(sources)})
+        privileged = [e["reply"]["observation"]["events"] for e in verified]
         founder = sum(item["sender"] == "founder" and item["decision"] != "role_denied"
                       for events in privileged for item in events)
         self.check(fixture["end"], "founder_privileged_interventions", {"count": 0},
@@ -361,12 +375,21 @@ def execute(topology, path, run, fixture, suite_deadline, action=None, suite='st
             error = f"{type(exc).__name__}: {exc}"
         finally:
             diagnostics = case.stop(error is not None)
-    observed_failure = any(not result["matches"] for result in case.results)
+    if suite == "step-6" and not error and any(result["observed"] is None for result in case.results):
+        error = "required enforcement observation missing"
+    observed_failure = any(not result["matches"] and (suite != "step-6" or result["observed"] is not None)
+                           for result in case.results)
     verdict = "FAIL" if observed_failure else "UNVERIFIED" if error else "PASS"
     return {"case": fixture, "suite": "smoke" if action is None else suite,
             "run": run, "revision": os.getenv("CHECKOUT_SHA"), "topology_sha256": digest(path),
             "initial_state": "fresh process directories and case-local logical state",
-            "authorities": {"orchestration": "harness", "access": "access-operator"},
+            "authorities": ({"orchestration": "harness", "backup": "backup-owner", "approval": "restore-owner",
+                             "restore": "a-steward", "service_peer": "op-b", "ingress": "ingress-owner",
+                             "writer": "writer-owner", "authorization": ["authz-owner", "recover-authz"],
+                             "publication": ["publisher", "recover-pub"],
+                             "credentials": ["credential-owner", "recover-creds"],
+                             "observation": "fixture-observer"} if suite == "step-6"
+                            else {"orchestration": "harness", "access": "access-operator"}),
             "verdict": verdict, "incomplete": error, "trace": case.trace,
             "checks": case.results, "diagnostics": diagnostics}
 
