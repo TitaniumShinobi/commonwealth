@@ -234,6 +234,7 @@ def listener(config_path, ready_path):
             send(self.wfile, result)
 
     class Server(socketserver.TCPServer):
+        allow_reuse_address = True
         def get_request(self):
             raw, address = super().get_request()
             raw.settimeout(2)
@@ -243,7 +244,7 @@ def listener(config_path, ready_path):
                 raw.close()
                 raise
 
-    with Server(("127.0.0.1", 0), Handler) as server:
+    with Server(("127.0.0.1", config.get("listen_port", 0)), Handler) as server:
         save(ready_path, {"endpoint": list(server.server_address), "listener": "ready",
                           "operator": config["operator"], "operator_sha256": operator,
                           "publication_sha256": publication, "serving_sha256": serving,
@@ -336,7 +337,9 @@ def exchange(args):
                  "action": args.action, "request_id": args.request_id}
     result = call(config, binding["endpoint"], protected, binding["serving_sha256"])
     return {**result, "binding_verified": True, "endpoint_sha256": binding["serving_sha256"],
-            "cache_initial": "empty", "binding_revision": binding["revision"]}
+            "cache_initial": "empty", "binding_revision": binding["revision"],
+            "binding_identity": {key: binding[key] for key in ("operator", "service", "endpoint", "serving_sha256", "revision")},
+            "signed_binding_sha256": sha(canonical(binding))}
 
 
 def lab(args):

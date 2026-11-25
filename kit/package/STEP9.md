@@ -37,7 +37,7 @@ The export contains a card and the two public verification keys. Use a separate 
 
 With the peer named `local-counterpart`, expect `commonwealth-reference-v1` for the read and a policy denial for the write. Keep both listeners running through both requests and stop them before removing the disposable state. A failed discovery on the reference path calls for a separate, locally approved counterpart identity. Use the counterpart's own audit to correlate the permitted and denied requests.
 
-The fixture tests local lifecycle authority state, including a modeled blocked restore and preservation of a peer withdrawal and binding floor across application-state restoration. Full installed network-peer lifecycle and complete browser/CLI lifecycle parity have separate evidence gates. The independent status extension uses the published protocol profile and its own Python implementation, source and artifact hashes, TLS endpoint, and publication authority. The fixture tests compatible build, incompatible startup, and version rejection on the active service.
+The installed fixture exercises clean signed setup, first exchange, transport failure, bilateral exit, and fenced restore through the command and browser paths. The independent status extension uses its own Python implementation, source and artifact hashes, TLS endpoint, and publication authority. The fixture tests compatible build, incompatible startup, and version rejection on the active service.
 
 The optional package targets the explicitly exercised Codex Linux x64 build only. The cloud job supplies a disposable public workspace under an unprivileged identity, stages the official host binary by release archive SHA-256, and attempts local App Server installation and skill discovery without model calls. Host compatibility requires actual host results. Neither release publication nor unsupported hosts are in scope.
 
@@ -63,3 +63,54 @@ In the installed operator guide, select the action and supply the exact target a
 - The fixture lifecycle uses `service-activate`, `service-backup`, `service-fence`, then `service-restore` under the serving authority. Each payload includes the approved `identity` with `operator`, `service`, `generation`, `certificate` SHA-256, and absolute `application` path. The target is that application path. Restore also requires the authoritative `backup_sha256`, a clean target, a fresh serving certificate, and the next generation. Enroll the new signed binding and verify a peer read, then check that the old generation still rejects reads and writes.
 
 The loopback fixture uses a protected authority broker and separate old-host OS identity. It does not configure a field or production service.
+
+## Work through upgrade, incompatible rejection, and rollback
+
+Stage three verified signed Kits at absolute directories `$BASE`, `$UPGRADE`, and `$INCOMPATIBLE`. Use the verifier's plan, local approval, and apply sequence for each candidate. The base is `0.1.0-test.2`. The compatible and incompatible candidates are separately signed `0.1.0-test.3` packages. Keep using the operator authority and the enrolled counterpart established above.
+
+Generate each exact payload from the corresponding verified installation proof.
+
+```bash
+for name in upgrade incompatible rollback; do
+  case "$name" in
+    upgrade) candidate="$UPGRADE" ;;
+    incompatible) candidate="$INCOMPATIBLE" ;;
+    rollback) candidate="$BASE" ;;
+  esac
+  python3 - "$candidate" > "$WORK/$name.json" <<'PY'
+import json, sys
+from pathlib import Path
+candidate = Path(sys.argv[1]).resolve()
+proof = json.loads((candidate / ".release-proof.json").read_text())
+print(json.dumps({"candidate_sha256": proof["release_sha256"], "configuration": str(candidate)}))
+PY
+done
+```
+
+For the browser route, open the installed operator guide using the authority for that route. Select `upgrade` with the contents of `upgrade.json`, then `upgrade` with `incompatible.json`, and finally `rollback` with `rollback.json`. For each decision, use the absolute operator directory as **Target**. Click **Review plan**, confirm the target, configuration path, and release digest, then click **Approve reviewed plan** and **Apply approved plan**. After each decision, run the selected binary exchange below using the browser route's operator directory.
+
+For the CLI route, use its independently installed base and operator directory. Run the following after inspecting the three payloads. Review each emitted plan before confirming it.
+
+```bash
+STATE="$WORK/operator-private"
+for name in upgrade incompatible rollback; do
+  operation=upgrade
+  if [ "$name" = rollback ]; then operation=rollback; fi
+  "$BASE/bin/commonwealth" operator plan --authority "$STATE" --operation "$operation" \
+    --target "$STATE" --payload "$WORK/$name.json" --out "$WORK/$name-plan.json"
+  cat "$WORK/$name-plan.json"
+  read -r -p "Type approve to apply this plan: " decision
+  if [ "$decision" != approve ]; then break; fi
+  "$BASE/bin/commonwealth" operator approve --authority "$STATE" --plan "$WORK/$name-plan.json" \
+    --confirm --out "$WORK/$name-approval.json"
+  "$BASE/bin/commonwealth" operator apply --authority "$STATE" --plan "$WORK/$name-plan.json" \
+    --approval "$WORK/$name-approval.json" --target "$STATE"
+  selected=$("$BASE/bin/commonwealth" operator inspect --authority "$STATE" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["selected_configuration"])')
+  sha256sum "$selected/bin/commonwealth"
+  "$selected/bin/commonwealth" peer exchange --state "$STATE/peers.json" --config "$STATE/node.json" \
+    --peer local-counterpart --service life.reference --action fixture.read --request-id "cli-$name"
+done
+```
+
+For the browser route, run the same inspect, digest, and exchange commands after each click sequence. Substitute the browser operator's state directory and use request IDs `browser-upgrade`, `browser-incompatible`, and `browser-rollback`. The compatible upgrade selects the staged upgrade directory. The incompatible plan returns `release_incompatible` and leaves the upgrade selected. Rollback selects the base. Each selected binary must read `commonwealth-reference-v1`; match its request ID and client identity against the counterpart's audit. A temporary LIFE restart in this cloud fixture has a **15-second** bound from stop request to first authorized read through the restored binding, using the original enrollment and unchanged trust and policy.

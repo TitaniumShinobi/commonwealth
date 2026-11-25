@@ -496,48 +496,99 @@ def lifecycle(binary, root, targets, boot, chrome, codex, installation_clicks):
                   enroll(binary, root, load(client), cards[name], name)["decision"])
         def request(executable, operator, label, action="fixture.read"):
             return exchange(executable, client, operator, "life.reference", action, label)
-        check("reference_before_outage", "commonwealth-reference-v1",
-              request(binary, "life-reference", "before-outage").get("result"))
+        before = request(binary, "life-reference", "before-outage")
+        check("reference_before_outage", "commonwealth-reference-v1", before.get("result"))
+        baseline_trust = operate(binary, scripted, "inspect")
+        baseline_policy = sha(client.read_bytes())
+        prior_destination = sha(ref.read_bytes())
+        reference_card = load(cards["reference"])
+        # Rebind the same locator and serving identity after a temporary fixture outage.
+        # Measured from stop request through the first authorized recovered read.
+        started = time.monotonic()
         stop(processes[0])
-        check("reference_outage_reached_transport", "discovery_unavailable",
-              request(binary, "life-reference", "during-outage").get("reason"))
-        check("counterpart_during_outage", "commonwealth-reference-v1",
-              request(binary, "local-counterpart", "local-allow").get("result"))
+        outage = request(binary, "life-reference", "during-outage")
+        check("reference_outage_reached_transport", "discovery_unavailable", outage.get("reason"))
+        control = request(binary, "local-counterpart", "local-allow")
+        check("counterpart_during_outage", "commonwealth-reference-v1", control.get("result"))
         denied = request(binary, "local-counterpart", "local-deny", "fixture.write")
         check("counterpart_destination_denial", ["denied", None], [denied["decision"], denied.get("result")])
-        details["counterpart_audit"] = Path(load(local)["audit"]).read_text().splitlines()
-        write(ref, {**load(ref), "participant_grants": [grant]})
+        write(ref, {**load(ref), "listen_port": reference_card["endpoint"][1]})
         ready = root / "reference-recovered"
         proc, recovered = start([binary, "node", "start", "--config", ref, "--ready-out", ready], ready)
         processes.append(proc)
-        new_card = card(root, "reference-recovered", load(ref), recovered)
-        check("reference_recovery_distinct_exchange", ["applied", "commonwealth-reference-v1"],
-              [enroll(binary, root, load(client), new_card, "reference-recovered")["decision"],
-               request(binary, "life-reference", "reference-recovered").get("result")])
+        after = request(binary, "life-reference", "reference-recovered")
+        elapsed = round(time.monotonic() - started, 3)
+        recovered_trust = operate(binary, scripted, "inspect")
+        recovered_policy = sha(client.read_bytes())
+        # The restart locator is the sole server configuration change.
+        server_policy = load(ref)
+        server_policy.pop("listen_port")
+        check("reference_recovery_original_enrollment", [baseline_trust, baseline_policy, prior_destination],
+              [recovered_trust, recovered_policy, sha(canonical(server_policy))])
+        check("reference_recovery_binding", [before["binding_identity"], "commonwealth-reference-v1"],
+              [after.get("binding_identity"), after.get("result")])
+        check("reference_recovery_within_cloud_bound", True, elapsed <= 15)
+        details["reference_recovery"] = {
+            "bound_seconds": 15, "elapsed_seconds": elapsed,
+            "intervening_actions": ["stop_reference", "probe_reference", "read_counterpart", "deny_counterpart_write",
+                                     "restart_same_locator", "read_original_enrollment"],
+            "before": {"binding": before["binding_identity"], "signed_binding_sha256": before["signed_binding_sha256"],
+                       "trust_sha256": sha(canonical(baseline_trust)), "client_policy_sha256": baseline_policy,
+                       "destination_policy_sha256": prior_destination},
+            "after": {"binding": after.get("binding_identity"), "signed_binding_sha256": after.get("signed_binding_sha256"),
+                      "trust_sha256": sha(canonical(recovered_trust)), "client_policy_sha256": recovered_policy,
+                      "destination_policy_sha256": sha(canonical(server_policy))},
+            "destination_audit": Path(load(ref)["audit"]).read_text().splitlines()}
+        new_card = cards["reference"]
 
-        # Signed, independently verified releases were staged before selection.
+        guided_binary = targets["guided-base"] / "bin/commonwealth"
+        guided_enrollment = browser_apply(guided_binary, root, boot, chrome, guided, guided, "enroll",
+                                          approved_card(cards["counterpart"]), "applied", guided_observations)
+        if not guided_enrollment:
+            raise RuntimeError("guided counterpart enrollment unavailable")
+        details["release_selection"] = []
         for label, choice, success in (("upgrade", "step9-upgrade", True),
                                        ("incompatible", "step9-incompatible", False),
                                        ("rollback", "step9-base", True)):
-            chosen = targets[choice]
-            profile = load(chosen / "profile.json")
-            old = operate(binary, scripted, "inspect").get("selected_configuration")
-            candidate = {"candidate_sha256": load(chosen / ".release-proof.json")["release_sha256"],
-                         "configuration": str(chosen)}
             operation = "rollback" if label == "rollback" else "upgrade"
-            plan, permit = approval(binary, scripted, root, label, operation, target, candidate)
-            result = apply(binary, scripted, target, plan, permit)
-            selected = operate(binary, scripted, "inspect")["selected_configuration"]
-            check(label + "_selection", ["applied" if success else "denied", str(chosen) if success else old],
-                  [result["decision"], selected])
-            guided_result = guided_apply(operation, candidate, result["decision"])
-            if guided_result:
-                check(label + "_guided_parity",
-                      [result["decision"], result.get("reason"), selected],
-                      [guided_result["decision"], guided_result.get("reason"),
-                       operate(binary, guided, "inspect").get("selected_configuration")])
-            check(label + "_selected_client_exchange", "commonwealth-reference-v1",
-                  request(Path(selected) / "bin/commonwealth", "local-counterpart", label).get("result"))
+            outcomes = []
+            for surface, owner, config, name, installer, workload in (
+                    ("cli", scripted, client, choice, binary, grant),
+                    ("browser", guided, guided_client, choice.replace("step9-", "guided-"), guided_binary, guided_grant)):
+                chosen = targets[name]
+                old = operate(installer, owner, "inspect").get("selected_configuration")
+                candidate = {"candidate_sha256": load(chosen / ".release-proof.json")["release_sha256"],
+                             "configuration": str(chosen)}
+                expected = "applied" if success else "denied"
+                if surface == "browser":
+                    result = browser_apply(installer, root, boot, chrome, owner, owner, operation,
+                                           candidate, expected, guided_observations)
+                    if not result:
+                        raise RuntimeError("guided release selection unavailable: " + label)
+                else:
+                    plan, permit = approval(installer, owner, root, label, operation, owner, candidate)
+                    result = apply(installer, owner, owner, plan, permit)
+                selected = operate(installer, owner, "inspect")["selected_configuration"]
+                check(label + "_" + surface + "_selection", [expected, str(chosen) if success else old],
+                      [result["decision"], selected])
+                executable = Path(selected) / "bin/commonwealth"
+                digest = sha(executable.read_bytes())
+                request_id = f"release-{label}-{surface}"
+                observed = exchange(executable, config, "local-counterpart", "life.reference", "fixture.read", request_id)
+                audit = [row for row in map(json.loads, Path(load(local)["audit"]).read_text().splitlines())
+                         if row["request_id"] == request_id]
+                check(label + "_" + surface + "_selected_exchange",
+                      ["commonwealth-reference-v1", str(executable), digest, [(workload, "allowed")]],
+                      [observed.get("result"), observed.get("origin", {}).get("entrypoint"),
+                       observed.get("origin", {}).get("entrypoint_sha256"),
+                       [(row["client_sha256"], row["decision"]) for row in audit]])
+                outcomes.append({"surface": surface, "decision": result["decision"], "reason": result.get("reason"),
+                                 "executable": str(executable), "executable_sha256": digest,
+                                 "authority": str(owner), "request_id": request_id, "destination_audit": audit})
+            check(label + "_guided_parity", [outcomes[0]["decision"], outcomes[0]["reason"], outcomes[0]["executable_sha256"]],
+                  [outcomes[1]["decision"], outcomes[1]["reason"], outcomes[1]["executable_sha256"]])
+            details["release_selection"].append({"case": label, "observations": outcomes})
+        details["counterpart_audit"] = Path(load(local)["audit"]).read_text().splitlines()
 
         extension = targets["step9-base"] / "extension"
         source = extension / "status_peer.py"
@@ -694,6 +745,11 @@ def main():
             guided_root.mkdir()
             targets["guided-base"], installation_clicks = install_guided(boot, release, guided_root,
                 args.revision, args.chrome, root / "guided")
+            for suffix in ("upgrade", "incompatible"):
+                staging = guided_root / suffix
+                staging.mkdir()
+                targets["guided-" + suffix], installations["guided-" + suffix] = install(boot, release, staging,
+                    "step9-" + suffix, "0.1.0-test.3", args.revision)
             for field in ("release_sha256", "inventory"):
                 proofs = [load(targets[name] / ".release-proof.json")[field] for name in ("step9-base", "guided-base")]
                 check("install_parity_" + field, proofs[0], proofs[1])
