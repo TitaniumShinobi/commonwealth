@@ -311,6 +311,7 @@ jobs:
           (p.parent / "custody.json").write_text(json.dumps(proof))
           PY
       - name: Preserve Step 8 consumer evidence
+        id: kit_receipt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -318,3 +319,37 @@ jobs:
           path: ${{ runner.temp }}/kit-consumer/evidence
           retention-days: 14
           if-no-files-found: error
+      - name: Re-read the consumer evidence archive
+        if: always() && steps.kit_receipt.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECEIPT_ID: ${{ steps.kit_receipt.outputs.artifact-id }}
+          RECEIPT_SHA: ${{ steps.kit_receipt.outputs.artifact-digest }}
+        run: |
+          root="$RUNNER_TEMP/kit-consumer"
+          for attempt in 1 2 3; do
+            if curl --fail --silent --show-error --location --max-time 15 --max-filesize 8388608 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$RECEIPT_ID/zip" \
+              -o "$root/receipt.zip"; then break; fi
+            if [[ "$attempt" == 3 ]]; then exit 2; fi
+            sleep 2
+          done
+          echo "${RECEIPT_SHA#sha256:}  $root/receipt.zip" | sha256sum --check
+          python3 - "$root" <<'PY'
+          import hashlib, json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          with zipfile.ZipFile(root / "receipt.zip") as archive:
+              members = archive.namelist()
+              if sorted(members) != ["custody.json", "step-8.json"]:
+                  raise SystemExit("wrong consumer archive members")
+              digests = {}
+              for name in members:
+                  archived = archive.read(name)
+                  if archived != (root / "evidence" / name).read_bytes():
+                      raise SystemExit("consumer archive member differs")
+                  digests[name] = hashlib.sha256(archived).hexdigest()
+          print(json.dumps({"step8_custody": "verified", "artifact_id": os.environ["RECEIPT_ID"],
+                            "archive_sha256": os.environ["RECEIPT_SHA"], "members": digests}))
+          PY

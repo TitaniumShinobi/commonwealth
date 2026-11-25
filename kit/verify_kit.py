@@ -1,5 +1,7 @@
 """Trusted release verifier for the fixed Step 8 fixture coordinate."""
 import argparse
+import ctypes
+import errno
 import hashlib
 import io
 import json
@@ -134,6 +136,17 @@ def approve(plan_value):
             "plan_sha256": sha(canonical(plan_value))}
 
 
+def promote_absent(staged, target):
+    libc = ctypes.CDLL(None, use_errno=True)
+    move = libc.renameat2
+    move.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    if move(-100, os.fsencode(staged), -100, os.fsencode(target), 1):
+        status = ctypes.get_errno()
+        if status == errno.EEXIST:
+            raise Rejected("target_already_exists")
+        raise OSError(status, os.strerror(status))
+
+
 def install(args):
     value = load(args.plan)
     target = Path(args.target).resolve()
@@ -165,7 +178,9 @@ def install(args):
             raise Rejected("staged_inventory_mismatch")
         if target.exists():
             raise Rejected("target_already_exists")
-        staged.rename(target)
+        write(staged / ".release-proof.json", {"release_sha256": metadata["sha256"],
+              "manifest_sha256": manifest, "inventory": manifest_inventory})
+        promote_absent(staged, target)
     return {"decision": "installed", "target": str(target), "inventory": manifest_inventory,
             "entrypoint": str(target / "bin/commonwealth"), "manifest_sha256": manifest,
             "release_sha256": metadata["sha256"], "root_sha256": fingerprint}

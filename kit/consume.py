@@ -114,6 +114,8 @@ def verification(boot, releases, work, revision):
     approved = approve_file(plan, "valid")
     receipt = apply(target, plan, approved)
     check("installed", "installed", receipt["decision"])
+    check("installed_setup_uses_verified_archive_digest", receipt["release_sha256"],
+          load(target / ".release-proof.json")["release_sha256"])
     check("staging_clean", [], [str(p) for p in work.glob(".kit-stage-*")])
     r = apply(target, plan, approved)
     check("existing_install_preserved", ["target_already_exists", receipt["inventory"]["bin/commonwealth"]],
@@ -344,7 +346,7 @@ def main():
         routes = Path("/proc/net/route").read_text().splitlines()[1:]
         ipv6 = Path("/proc/net/ipv6_route").read_text().splitlines()
         check("loopback_only_network", [[], ["lo"], True],
-              [routes, sorted(p.name for p in Path("/sys/class/net").iterdir()),
+              [routes, sorted(name for _, name in socket.if_nameindex()),
                all(line.split()[-1] == "lo" for line in ipv6)])
         if not CHECKS[-1]["matches"]:
             raise RuntimeError("consumer network namespace is not isolated")

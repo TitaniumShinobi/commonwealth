@@ -202,9 +202,8 @@ def setup_plan(args):
     names = ("ca", "certificate", "tls_key", "operator_public", "operator_key", "publication_public",
              "publication_key", "state", "audit", "node_config", "peer_state")
     value = paths(value, config_path, names)
-    release = load(ORIGIN.parent.parent / "release.json")
     plan = {"actor": "fixture-local-operator", "action": args.mode, "target": str(Path(args.target).resolve()),
-            "release_sha256": sha(canonical(release)), "configuration": value}
+            "release_sha256": load(ORIGIN.parent.parent / ".release-proof.json")["release_sha256"], "configuration": value}
     save(args.out, plan)
     return {"decision": "planned", "plan_sha256": sha(canonical(plan)), "target": plan["target"]}
 
@@ -219,7 +218,7 @@ def setup_apply(args):
     expected = {k: p[k] for k in ("actor", "action", "target", "release_sha256")}
     if load(args.approval) != {**expected, "plan_sha256": sha(canonical(p))}:
         raise ValueError("approved_plan_changed")
-    if p["release_sha256"] != sha(canonical(load(ORIGIN.parent.parent / "release.json"))):
+    if p["release_sha256"] != load(ORIGIN.parent.parent / ".release-proof.json")["release_sha256"]:
         raise ValueError("release_changed")
     if target.exists():
         raise ValueError("target_already_exists")
