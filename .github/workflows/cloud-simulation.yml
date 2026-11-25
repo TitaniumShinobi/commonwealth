@@ -389,7 +389,7 @@ jobs:
           path: ${{ runner.temp }}/kit-consumer/evidence
           retention-days: 14
           if-no-files-found: error
-      # Run the branch workflow again when the guide packaged in the signed archive changes.
+      # Run the branch workflow again for changes to the guide packed in the signed archive.
       - name: Re-read the consumer evidence archive
         if: always() && steps.kit_receipt.outcome == 'success'
         env:

@@ -23,7 +23,7 @@ Use a foreground LIFE fixture with separate operator and publication signing key
 
 ```bash
 timeout 5s sh -c 'until test -s "$1"; do sleep 0.1; done' sh "$WORK/life-ready.json"
-"$TARGET/bin/commonwealth" service trust --state "$WORK/participant/peer-state.json" --reference "$WORK/life-card.json" --approval "$WORK/participant-local.json"
+"$TARGET/bin/commonwealth" service trust --state "$WORK/participant/peer-state.json" --reference "$WORK/life-reference-card.json" --approval "$WORK/participant-peer-local.json"
 "$TARGET/bin/commonwealth" service request --state "$WORK/participant/peer-state.json" --config "$WORK/participant/config.json" --peer life-reference --service life.reference --action fixture.read --request-id service-allow
 "$TARGET/bin/commonwealth" service request --state "$WORK/participant/peer-state.json" --config "$WORK/participant/config.json" --peer life-reference --service life.reference --action fixture.write --request-id service-deny
 ```
@@ -50,7 +50,7 @@ Leave the operator node running. Listener readiness identifies a reachable local
 **Operator Shell B · verify readiness and prepare cards.** Use the same `TARGET` and `WORK`, inside the same loopback-only fixture. Use readiness files from the current listeners and check the operator and serving identities before exchanging their public cards. When the fixture driver has already provisioned the cards, use its verified copies.
 
 ```bash
-timeout 5s sh -c 'until test -s "$1" && test -s "$2"; do sleep 0.1; done' sh "$WORK/operator-ready.json" "$WORK/life-ready.json"
+timeout 5s sh -c 'until test -s "$1" && test -s "$2"; do sleep 0.1; done' sh "$WORK/operator-ready.json" "$WORK/life-ready.json" || exit 1
 python3 - "$WORK" <<'PY'
 import json, sys
 from pathlib import Path
@@ -69,7 +69,7 @@ for label, config in (("life", "life-reference/config.json"),
 PY
 ```
 
-**Record both local acceptances.** The operator reviews the LIFE card and writes `operator-peer-local.json`. Separately, the LIFE operator reviews the operator card and writes `life-peer-local.json`. Each approval contains `actor: "fixture-local-operator"`, the approved card's `operator_sha256`, and the operator's own boolean `accept` decision. Run each enrollment under the corresponding fixture role with its own state file. Both commands must report `locally_enrolled` before an authorized exchange. If either side declines in a fresh refusal exercise, stop before enrolling the other side. Verify both peer states remain empty and an operator exchange reports `peer_not_enrolled` without a protected request.
+**Record both local acceptances.** The operator reviews the LIFE card and writes `operator-peer-local.json`. Separately, the LIFE operator reviews the operator card and writes `life-peer-local.json`. Each approval contains `actor: "fixture-local-operator"`, the approved card's `operator_sha256`, and the operator's own boolean `accept` decision. Run each enrollment under the corresponding fixture role with its own state file. Both commands must report `locally_enrolled` before an authorized exchange. For a fresh refusal exercise, attempt the operator enrollment first with `accept: false` and skip LIFE enrollment. Verify both peer states remain empty and an operator exchange reports `peer_not_enrolled` without a protected request.
 
 ```bash
 "$TARGET/bin/commonwealth" peer enroll --state "$WORK/operator-node/peer-state.json" --reference "$WORK/life-reference-card.json" --approval "$WORK/operator-peer-local.json"
