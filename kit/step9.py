@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -184,9 +185,9 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         request = urllib.request.Request(url, data=data, headers=headers or {})
         try:
             with urllib.request.urlopen(request, timeout=2) as response:
-                return response.status, response.headers
+                return response.status, response.headers, response.read(8192)
         except urllib.error.HTTPError as exc:
-            return exc.code, exc.headers
+            return exc.code, exc.headers, exc.read(8192)
 
     before_browser_controls = operate(binary, guided, "inspect")
     guide_ready = root / "security-ready"
@@ -196,14 +197,18 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         site = urllib.parse.urlsplit(address["url"])
         origin = f"{site.scheme}://{site.netloc}"
         check("guide_missing_session_denied", 403, inspect_http(origin + "/apply", b"confirmed=yes")[0])
-        status, headers = inspect_http(address["url"])
+        status, headers, page = inspect_http(address["url"])
         check("guide_single_launch", 200, status)
         cookie = headers["Set-Cookie"].split(";")[0]
-        check("guide_launch_replay_denied", 403, inspect_http(address["url"])[0])
+        csrf = re.search(rb'name="csrf" type="hidden" value="([^"]+)"', page).group(1)
+        replay_status, _, replay_page = inspect_http(address["url"])
+        check("guide_launch_replay_denied", [403, False], [replay_status, csrf in replay_page])
         check("guide_wrong_origin_denied", 403, inspect_http(origin + "/apply", b"confirmed=yes",
               {"Origin": "http://untrusted.test", "Cookie": cookie})[0])
-        check("guide_unapproved_mutation_denied", 422, inspect_http(origin + "/apply", b"confirmed=yes",
-              {"Origin": origin, "Cookie": cookie})[0])
+        unapproved, _, body = inspect_http(origin + "/apply", b"confirmed=yes&csrf=" + csrf,
+                                          {"Origin": origin, "Cookie": cookie})
+        check("guide_unapproved_mutation_denied", [422, True],
+              [unapproved, b"explicit_confirmation_required" in body])
         time.sleep(2.1)
         check("guide_expired_session_denied", 403,
               inspect_http(origin + "/apply", b"confirmed=yes", {"Origin": origin, "Cookie": cookie})[0])
@@ -343,8 +348,8 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         check("host_private_read_denied", 1, done.returncode)
         done = run("sudo", "-n", "runuser", "-u", "nobody", "--", "python3", public / "host9.py",
                    codex, public, public / "host.json", limit=28)
-        host_report = public / "host.json"
-        details["host"] = load(host_report) if host_report.exists() and host_report.stat().st_size else {
+        archived_host = run("sudo", "-n", "runuser", "-u", "nobody", "--", "cat", public / "host.json")
+        details["host"] = json.loads(archived_host.stdout) if archived_host.returncode == 0 and archived_host.stdout else {
             "verdict": "UNVERIFIED", "exit": done.returncode}
         proposed = public / "proposed-plan.json"
         shutil.copyfile(plan, proposed)
@@ -393,7 +398,8 @@ def main():
                   "network peer exit and fenced restore with fresh serving identity"]
     if detail.get("host", {}).get("verdict") != "PASS":
         unverified.append("Codex local installation and enabled-skill discovery")
-    if detail.get("browser", {}).get("verdict") == "UNVERIFIED" if isinstance(detail.get("browser"), dict) else not detail.get("browser"):
+    browser = detail.get("browser")
+    if not browser or (isinstance(browser, dict) and browser.get("verdict") == "UNVERIFIED"):
         unverified.append("browser setup clicks")
     verdict = "FAIL" if not matched else "UNVERIFIED" if unverified or error else "PASS"
     receipt = {"revision": args.revision, "verdict": verdict, "incomplete": error,

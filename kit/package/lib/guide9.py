@@ -47,6 +47,8 @@ def serve(directory, ready, seconds=45):
                     f'<button id="{step}-button" name="confirmed" value="yes">{label}</button></form>'
                     for step, label in (("approve", "Approve reviewed plan"), ("apply", "Apply approved plan")))
             ).encode()
+            if status == 403:
+                page = ("<!doctype html><title>Access denied</title><pre>" + result + "</pre>").encode()
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
