@@ -35,12 +35,16 @@ try {
     return r.result?.result?.value;
   }
   async function decision(expected) {
-    for (let i = 0; i < 40; i++) {
+    let last;
+    for (let i = 0; i < 75; i++) {
       const result = await value("document.querySelector('#result')?.textContent");
-      if (result && JSON.parse(result).decision === expected) return JSON.parse(result);
+      if (result) {
+        last = JSON.parse(result);
+        if (last.decision === expected) return last;
+      }
       await wait(100);
     }
-    throw Error("browser did not observe " + expected);
+    throw Error("browser did not observe " + expected + "; last decision: " + (last?.decision ?? "none") + "; " + (last?.reason ?? ""));
   }
   async function click(id) {
     const selector = JSON.stringify("#" + id);

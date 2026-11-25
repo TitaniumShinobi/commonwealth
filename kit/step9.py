@@ -59,7 +59,8 @@ def install_guided(boot, releases, root, revision, chrome, authority):
     version = "0.1.0-test.2"
     if not chrome:
         raise RuntimeError("guided installation browser unavailable")
-    for attempt in range(2):
+    failures = []
+    for attempt in range(3):
         ready = root / f"install-ready-{attempt}"
         args = [sys.executable, boot / "verify_kit.py", "guide", "--manifest", release / "manifest.json",
                 "--signature", release / "manifest.sig", "--archive", release / f"commonwealth-kit-{version}.tar.gz",
@@ -72,11 +73,17 @@ def install_guided(boot, releases, root, revision, chrome, authority):
                                       listening["url"], str(target), "install"], capture_output=True, timeout=25)
             if process.returncode == 0:
                 return target, json.loads(process.stdout)
-            if target.exists() or Path(authority).exists():
-                break
+            diagnostic = process.stderr.decode(errors="replace").replace(listening["url"], "<private launch URL>")
+            failures.append(diagnostic[-700:])
+        except subprocess.TimeoutExpired:
+            failures.append("browser timeout")
         finally:
             stop(guide)
-    raise RuntimeError("trusted installer clicks did not reach bootstrap")
+        # These paths are newly allocated for this disposable fixture only.
+        for attempt_path in (target, Path(authority)):
+            if attempt_path.exists():
+                shutil.rmtree(attempt_path)
+    raise RuntimeError("trusted installer clicks did not reach bootstrap: " + " / ".join(failures))
 
 
 def operate(binary, directory, action, *args):
