@@ -6,37 +6,41 @@
 
 **CLASSICAL ACCESS. REPRODUCIBLE QUANTUM RESEARCH.**
 
-1. **Finish the service rubric.** [YOU ARE HERE]
+1. **Finish the service rubric.** [STEP 1 PASS]
    - Use [COMMONWEALTH.md](COMMONWEALTH.md) as the working draft. Carry forward its approved flows, interfaces and Security boundaries.
    - Add worked superposition and measurement, LIFE Containerism and rematerialization, and a comparison of bilateral signed records, witnessed logs and blockchain consensus. Keep telemetry provenance, measurement and verdict separate.
    - QC + CleanGPT: score every changed requirement against the source decision and an observable result. Record a revision-bound verdict. Keep the website rubric separate.
 
-2. **Pin the cloud implementation baseline.** [HYDRO]
+2. **Pin the cloud implementation baseline.** [STEP 2 AGREED · HYDRO]
    - Scout records the exact repository revision and available cloud runner. Designer and EngineerGPT agree on the first topology, commands, fixtures, recovery limits and acceptance receipts.
    - Arbiter resolves blocking product decisions. Pad implements the agreed scope. QC checks the resulting revision independently and CleanGPT checks the operator materials.
    - Use the existing HYDRO roles for development. The product runtime operates without HYDRO, MDBO, AUTO, Chatty CLI or an AI model.
 
-3. **Start the classical network simulation.** [CLOUD ONLY]
+3. **Start the classical network simulation.** [STEP 3 PASS · CLOUD SIMULATION]
    - Use two operator instances with separate keys, policies, and administrative access, plus one protected service and one independent control workload.
    - Exercise device attachment, address, gateway and resolver provisioning, forwarding and isolation in the selected test topology. Record the configuration, exact run commands and observations.
    - Keep the simulated site path distinct from a real field access result.
 
-4. **Finish first peer exchange and service discovery.** [CLOUD ONLY]
+4. **Finish first peer exchange and service discovery.** [STEP 4 PASS · CLOUD SIMULATION]
    - Start a peer with an empty service cache. Enroll each operator locally, verify the discovery locator and publication authority, and resolve the first service endpoint.
    - Exercise a permitted request, a destination-policy denial, a moved endpoint, expiry, conflicting and stale records, and peer exit. Score authenticated unavailability, timeout and TLS failure separately.
    - Receipt: exact operator and configuration revisions, lookup and binding decisions, request outcomes, and evidence that unrelated exchanges continue.
 
-5. **Complete household controls and crossing cleanup.** [SECURITY]
+5. **Complete household controls and crossing cleanup.** [STEP 5 PASS · CLOUD SIMULATION]
    - Exercise tenant and management separation, enrolled device and workload identities, scoped grants, isolated application execution and current-policy checks. Verify withdrawal against active and queued work.
    - Close one crossing while the sender retries. Invalidate its authorization and clear the temporary state within its defined boundary. Verify that both domains and an unrelated crossing keep operating.
    - Treat cleanup of retained material as a separately approved scope. Keep laboratory memory under its own local lease and apparatus lifecycle.
 
-6. **Complete the first routine rematerialization test.** [CLOUD ONLY]
+6. **Complete the first routine rematerialization test.** [STEP 6 PASS · CLOUD SIMULATION]
+   - Accepted implementation: [`fab802f`](https://github.com/TitaniumShinobi/commonwealth/commit/fab802f3da5f9037db346b90eb4896fe91f0643d), integrated into `main`. QC and CleanGPT independently passed the same revision.
+   - [GitHub Actions receipts](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45648022747/job/139324216389) · [archived evidence](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45648022747/artifacts/15037809525). Smoke first, 219 regression checks, and two clean Step 6 executions with 852 checks each across 11 cases. All 11 semantic replays matched.
+   - One authorized restore committed. B read the verified record through revision 2 at tick 15 after loss at tick 10. Restored-data age was 2 ticks. B completed 21/21 operations with unchanged trust and policy. Zero unauthorized effects and zero founder/delegate interventions in the scored routine case. Separate audit challenges confirmed detection of off-plan and unaccounted effects.
+   - Scope: synthetic modeled authority and fencing in the cloud. Production credential custody, privileged runner mutation, real host fencing, and independent organizational operation have separate evidence requirements.
    - Operator A’s authorized steward restores one service from a trusted backup onto a clean replacement host. Fence the old host, restore verified data and publish the replacement under the same logical service identity.
    - Operator B accepts the valid replacement under its existing trust and policy. B’s independent workload stays within its continuity limit. Record recovery time, restored-data age, and evidence of zero founder intervention.
    - Separately score revoked credentials, tampered backup and unauthorized rejoin. Exercise authority-store recovery without restoring stale policy or revocation state.
 
-7. **Prepare the real Internet pilot.** [PARALLEL FIELD TRACK · TARGET NOVEMBER 30, 2026 · LIVE ACTIVATION HELD]
+7. **Prepare the real Internet pilot.** [NEXT · PARALLEL FIELD TRACK · TARGET NOVEMBER 30, 2026 · LIVE ACTIVATION HELD]
    - Prepare this track alongside cloud simulation. Score readiness from site and service evidence.
    - Confirm one approved site, accountable operator and funding owner, permitted participant use, authorized upstream, compatible equipment, support and recovery responsibilities.
    - Use an existing authorized uplink when available. Starlink, fiber and terrestrial radio are candidates. Confirm the actual provider arrangement and any costs at the site.
