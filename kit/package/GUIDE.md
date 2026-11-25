@@ -32,19 +32,62 @@ Match both IDs to the server audit. The read returns `commonwealth-reference-v1`
 
 ### Run a node
 
+Use the verified installation, a fresh `$WORK/setup-operator` target, and separate LIFE and operator configurations and peer states. Each fresh peer-state file contains `{"peers":{}}`. Keep the LIFE reference listener running in its own terminal as shown in **Connect to a service**. Use two additional shells for the operator startup and the peer actions. If the reference listener was stopped after the service exercise, start it again with a fresh readiness file and refresh its card from that listener's endpoint and identity.
+
+**Operator Shell A · plan, approve, apply, start.** Generate the node plan first. Review the target, release digest, and configuration, then write the separate local setup approval described above. Run apply only after approval. An applied configuration has no listener until startup succeeds.
+
 ```bash
 "$TARGET/bin/commonwealth" setup plan --mode node --config "$WORK/operator-node/config.json" --target "$WORK/setup-operator" --out "$WORK/operator-plan.json"
-"$TARGET/bin/commonwealth" setup apply --plan "$WORK/operator-plan.json" --approval "$WORK/operator-approval.json" --target "$WORK/setup-operator"
-"$TARGET/bin/commonwealth" node start --config "$WORK/setup-operator/config.json" --ready-out "$WORK/operator-ready.json"
-"$TARGET/bin/commonwealth" peer enroll --state "$WORK/operator-node/peer-state.json" --reference "$WORK/life-card.json" --approval "$WORK/operator-local.json"
-"$TARGET/bin/commonwealth" peer exchange --state "$WORK/operator-node/peer-state.json" --config "$WORK/setup-operator/config.json" --peer life-reference --service life.reference --action fixture.read --request-id peer-allow
 ```
 
-LIFE independently approves the operator card with the same enrollment command and its own local state. Refusal leaves both fresh peer stores empty. The exchange uses only the verified installed commands, the fixture CA, and published [protocol](PROTOCOL.md).
+```bash
+"$TARGET/bin/commonwealth" setup apply --plan "$WORK/operator-plan.json" --approval "$WORK/operator-approval.json" --target "$WORK/setup-operator"
+"$TARGET/bin/commonwealth" node start --config "$WORK/setup-operator/config.json" --ready-out "$WORK/operator-ready.json"
+```
+
+Leave the operator node running. Listener readiness identifies a reachable local endpoint and configuration. Peer acceptance requires two separate decisions in Shell B.
+
+**Operator Shell B · verify readiness and prepare cards.** Use the same `TARGET` and `WORK`, inside the same loopback-only fixture. Use readiness files from the current listeners and check the operator and serving identities before exchanging their public cards. When the fixture driver has already provisioned the cards, use its verified copies.
+
+```bash
+timeout 5s sh -c 'until test -s "$1" && test -s "$2"; do sleep 0.1; done' sh "$WORK/operator-ready.json" "$WORK/life-ready.json"
+python3 - "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+for label, config in (("life", "life-reference/config.json"),
+                      ("operator", "setup-operator/config.json")):
+    config_path = work / config
+    ready = json.loads((work / f"{label}-ready.json").read_text())
+    if ready["listener"] != "ready" or ready["endpoint"][0] != "127.0.0.1":
+        raise SystemExit(f"{label} listener unavailable")
+    settings = json.loads(config_path.read_text())
+    for key in ("operator_public", "publication_public"):
+        ready[key] = str((config_path.parent / settings[key]).resolve())
+    (work / f'{ready["operator"]}-card.json').write_text(json.dumps(ready))
+PY
+```
+
+**Record both local acceptances.** The operator reviews the LIFE card and writes `operator-peer-local.json`. Separately, the LIFE operator reviews the operator card and writes `life-peer-local.json`. Each approval contains `actor: "fixture-local-operator"`, the approved card's `operator_sha256`, and the operator's own boolean `accept` decision. Run each enrollment under the corresponding fixture role with its own state file. Both commands must report `locally_enrolled` before an authorized exchange. If either side declines in a fresh refusal exercise, stop before enrolling the other side. Verify both peer states remain empty and an operator exchange reports `peer_not_enrolled` without a protected request.
+
+```bash
+"$TARGET/bin/commonwealth" peer enroll --state "$WORK/operator-node/peer-state.json" --reference "$WORK/life-reference-card.json" --approval "$WORK/operator-peer-local.json"
+"$TARGET/bin/commonwealth" peer enroll --state "$WORK/life-reference/peer-state.json" --reference "$WORK/operator-node-card.json" --approval "$WORK/life-peer-local.json"
+```
+
+**Score both requests with both listeners running.** The allowed response must contain `commonwealth-reference-v1`. The denied response must contain no protected result and report `mutated: false`. Match both request IDs to the LIFE server audit.
+
+```bash
+"$TARGET/bin/commonwealth" peer exchange --state "$WORK/operator-node/peer-state.json" --config "$WORK/setup-operator/config.json" --peer life-reference --service life.reference --action fixture.read --request-id peer-allow
+"$TARGET/bin/commonwealth" peer exchange --state "$WORK/operator-node/peer-state.json" --config "$WORK/setup-operator/config.json" --peer life-reference --service life.reference --action fixture.write --request-id peer-deny
+```
+
+**Stop and verify cleanup.** After scoring, interrupt the operator listener in Shell A and wait for it to exit. Stop the LIFE listener in its terminal after its remaining checks. Verify that connections to both recorded loopback ports fail and remove the disposable role stores after retaining public receipts. The exchange uses the installed commands, the fixture CA, and the published [protocol](PROTOCOL.md).
 
 ### Connect a lab
 
-Plan and apply mode `lab` with a separate target. Its configuration names the installed node configuration, the loopback endpoint and serving certificate digest, and `simulation-v1`. Check reachability and adapter readiness separately.
+Keep a verified fixture listener running in its own terminal for the lab checks. After a previous cleanup, restart it and update the lab configuration with its new endpoint and serving digest. Plan and apply mode `lab` with a separate target. Its configuration names the installed node configuration, the loopback endpoint and serving certificate digest, and `simulation-v1`. Check reachability and adapter readiness separately.
 
 ```bash
 "$TARGET/bin/commonwealth" lab check --config "$WORK/setup-lab/config.json"
@@ -52,6 +95,6 @@ Plan and apply mode `lab` with a separate target. Its configuration names the in
 "$TARGET/bin/commonwealth" lab run --config "$WORK/setup-lab/config.json" --template two-endpoint-v1 --seed 42 --scenario confirm-timeout
 ```
 
-Use the published [adapter contract](ADAPTER.md). The cloud receipt authenticates the archive and installed entry-point digests, correlates client and server request IDs, and records simulation, replay, and cleanup separately. The tested fixture establishes neither production release authority nor a public deployment, independent organizational custody, field acceptance, or a physical result.
+After all lab checks, stop the fixture listener and verify its port closes. Use the published [adapter contract](ADAPTER.md). The cloud receipt authenticates the archive and installed entry-point digests, correlates client and server request IDs, and records simulation, replay, and cleanup separately. The tested fixture establishes neither production release authority nor a public deployment, independent organizational custody, field acceptance, or a physical result.
 
 The public bootstrap's `consume.py` fixture driver provisions the example inputs, applies both setup modes, and prints the exact command argv and receipts. In the cloud job, the driver receives only the separately downloaded bootstrap and release artifacts. The observer consumes only public receipts, not the temporary role stores.
