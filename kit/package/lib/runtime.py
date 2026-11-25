@@ -132,6 +132,14 @@ def call(config, endpoint, request, expected):
                 return receive(stream)
 
 
+def peer_state(config):
+    if "authority" in config:
+        from operator9 import database, state_of
+        with database(config["authority"]) as db:
+            return state_of(db)
+    return load(config["state"])
+
+
 def listener(config_path, ready_path):
     config = read_config(config_path)
     if config["host"] != "127.0.0.1":
@@ -161,7 +169,7 @@ def listener(config_path, ready_path):
             elif operation == "health":
                 result = {"decision": "reachable", "service": service}
             elif operation == "request":
-                state = load(config["state"])
+                state = peer_state(config)
                 accepted = (peer in config.get("participant_grants", []) or
                             any(card["workload_sha256"] == peer for card in state["peers"].values()))
                 shape = request.get("protocol") == 1 and request.get("service") == service
@@ -251,11 +259,11 @@ def trust(args):
 
 
 def exchange(args):
-    state = load(args.state)
+    config = read_config(args.config)
+    state = peer_state(config) if "authority" in config else load(args.state)
     card = state["peers"].get(args.peer)
     if not card:
         raise ValueError("peer_not_enrolled")
-    config = read_config(args.config)
     root = card["serving_sha256"]
     try:
         data = call(config, card["endpoint"], {"operation": "discover"}, root)

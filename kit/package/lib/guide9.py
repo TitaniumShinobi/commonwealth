@@ -11,7 +11,9 @@ from urllib.parse import parse_qs, urlsplit
 from operator9 import Denied, apply, canonical, issue, load, make_plan, save
 
 
-def serve(directory, ready):
+def serve(directory, ready, seconds=45):
+    if not 1 <= seconds <= 120:
+        raise Denied("invalid_session_duration")
     launch = secrets.token_urlsafe(32)
     session = secrets.token_urlsafe(32)
     csrf = secrets.token_urlsafe(32)
@@ -68,7 +70,7 @@ def serve(directory, ready):
                 if launched or parse_qs(path.query).get("token") != [launch]:
                     return self.show({"decision": "launch_denied"}, 403)
                 launched = True
-                expires = time.monotonic() + 45
+                expires = time.monotonic() + seconds
                 return self.show({"decision": "session_ready"}, cookie=True)
             if not self.eligible():
                 return self.show({"decision": "session_denied"}, 403)

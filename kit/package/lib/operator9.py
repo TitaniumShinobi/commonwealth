@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -94,6 +95,12 @@ def issue(directory, plan, seconds):
         return approval
 
 
+def public_fingerprint(path):
+    key = subprocess.check_output(["openssl", "pkey", "-pubin", "-in", path,
+                                   "-outform", "DER"], timeout=3)
+    return sha(key)
+
+
 def mutate(authority, plan):
     action, body = plan["action"], plan["payload"]
     if action == "configure":
@@ -102,8 +109,15 @@ def mutate(authority, plan):
         authority["settings"] = body
     elif action == "enroll":
         if set(body) != {"operator", "operator_sha256", "publication_sha256",
-                         "serving_sha256", "locator", "protocol"} or body["protocol"] != 1:
+                         "serving_sha256", "endpoint", "protocol", "workload_sha256",
+                         "operator_public", "publication_public"} or body["protocol"] != 1:
             raise Denied("card_incompatible")
+        address, port = body["endpoint"]
+        if address != "127.0.0.1" or type(port) is not int or not 0 < port < 65536:
+            raise Denied("locator_invalid")
+        if any(public_fingerprint(body[f"{role}_public"]) != body[f"{role}_sha256"]
+               for role in ("operator", "publication")):
+            raise Denied("card_public_key_mismatch")
         authority["peers"][body["operator"]] = body
         if body["operator"] in authority["withdrawn"]:
             authority["withdrawn"].remove(body["operator"])
@@ -112,9 +126,16 @@ def mutate(authority, plan):
         authority["peers"].pop(peer, None)
         authority["withdrawn"] = sorted(set([*authority["withdrawn"], peer]))
     elif action in ("upgrade", "rollback"):
-        if body.get("protocol") != 1 or body.get("state_schema") != 1:
+        selected = Path(body["configuration"]).resolve()
+        proof = load(selected / ".release-proof.json")
+        raw = (selected / "profile.json").read_bytes()
+        if (proof["release_sha256"] != body["candidate_sha256"]
+                or sha(raw) != proof["inventory"]["profile.json"]
+                or sha((selected / "bin/commonwealth").read_bytes()) != proof["inventory"]["bin/commonwealth"]):
+            raise Denied("verified_candidate_changed")
+        if json.loads(raw) != {"protocol": 1, "state_schema": 1}:
             raise Denied("release_incompatible")
-        authority["selected_configuration"] = body["configuration"]
+        authority["selected_configuration"] = str(selected)
     elif action == "restore":
         if body.get("ingress_fenced") is not True or body.get("writer_fenced") is not True:
             raise Denied("protected_service_closed")
@@ -214,13 +235,13 @@ def main(argv):
                 result = state_of(db)
         elif args.action == "guide":
             from guide9 import serve
-            return serve(directory, args.ready)
+            return serve(directory, args.ready, min(args.seconds, 120))
         else:
             from bootstrap9 import bootstrap
             result = bootstrap(directory, args.name)
         if args.out:
             save(args.out, result)
-    except (Denied, OSError, KeyError, TypeError, ValueError, sqlite3.Error) as exc:
+    except (Denied, OSError, KeyError, TypeError, ValueError, sqlite3.Error, subprocess.SubprocessError) as exc:
         result = {"decision": "denied", "reason": str(exc) if isinstance(exc, Denied) else type(exc).__name__}
         print(canonical(result).decode(), end="")
         return 2

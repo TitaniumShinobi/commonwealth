@@ -446,6 +446,8 @@ jobs:
           else
             echo "::warning::Pinned Codex CLI could not be staged"
           fi
+          echo "CW_NODE=$(command -v node)" >> "$GITHUB_ENV"
+          node --version
           chrome="$(command -v google-chrome || command -v chromium || true)"
           echo "CW_CHROME=$chrome" >> "$GITHUB_ENV"
           if [[ -n "$chrome" ]]; then "$chrome" --version; fi
@@ -459,7 +461,7 @@ jobs:
           sudo -n ip -n cw-kit9 link set lo up
           sudo -n ip netns exec cw-kit9 runuser -u "$USER" -- \
             env -i PATH=/usr/bin:/bin HOME="$root/empty" PYTHONDONTWRITEBYTECODE=1 \
-            CW_HOST_PUBLIC="${CW_HOST_PUBLIC:-}" \
+            CW_HOST_PUBLIC="${CW_HOST_PUBLIC:-}" CW_NODE="$CW_NODE" \
             timeout 150s python3 "$root/bootstrap/step9.py" \
               --bootstrap "$root/bootstrap" --release "$root/release" --revision "$GITHUB_SHA" \
               --chrome "${CW_CHROME:-}" --codex "${CW_CODEX:-}" --out "$root/step9/step-9.json"

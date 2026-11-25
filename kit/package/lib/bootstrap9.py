@@ -44,7 +44,7 @@ def bootstrap(authority, name):
              "client_certificate": str(private / "workload.pem"), "client_key": str(private / "workload.key"),
              "operator_public": str(private / "operator.pub"), "operator_key": str(private / "operator.key"),
              "publication_public": str(private / "publication.pub"), "publication_key": str(private / "publication.key"),
-             "state": str(root / "peers.json"), "audit": str(root / "audit.ndjson"),
+             "state": str(root / "peers.json"), "authority": str(root), "audit": str(root / "audit.ndjson"),
              "recovery_authority": f"fixture-local:{name}"})
     finally:
         os.umask(old)

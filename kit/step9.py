@@ -9,6 +9,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from verify_kit import approve, canonical, load, sha, write
@@ -100,12 +103,18 @@ def card(root, name, config, ready):
     return path
 
 
+def approved_card(reference):
+    fields = ("operator", "operator_sha256", "publication_sha256", "serving_sha256",
+              "endpoint", "operator_public", "publication_public")
+    source = load(reference)
+    return {**{name: source[name] for name in fields},
+            "workload_sha256": source.get("workload_sha256", source["serving_sha256"]), "protocol": 1}
+
+
 def enroll(binary, root, config, reference, label):
-    local = root / (label + ".enrollment")
-    write(local, {"actor": "fixture-local-operator", "accept": True,
-                  "operator_sha256": load(reference)["operator_sha256"]})
-    return command(binary, "peer", "enroll", "--state", config["state"],
-                   "--reference", reference, "--approval", local)
+    authority = Path(config["authority"])
+    plan, permit = approval(binary, authority, root, label, "enroll", authority, approved_card(reference))
+    return apply(binary, authority, authority, plan, permit)
 
 
 def exchange(binary, config_path, peer, service, action, request_id, version=1):
@@ -158,17 +167,49 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         guide, ready = start([binary, "operator", "guide", "--authority", guided, "--ready", address], address)
         try:
             # Browser commands contain a private one-time launch URL and are omitted from receipts.
-            browser = subprocess.run(["node", str(boot / "browser9.mjs"), chrome, ready["url"], str(target)],
+            browser = subprocess.run([os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome, ready["url"], str(target)],
                                      capture_output=True, timeout=20)
             if browser.returncode:
-                raise RuntimeError("browser fixture failed without recording its private launch URL")
-            details["browser"] = json.loads(browser.stdout)
-            check("browser_setup_parity", operate(binary, scripted, "inspect")["settings"],
+                details["browser"] = {"verdict": "UNVERIFIED", "reason": "browser fixture exited unsuccessfully"}
+            else:
+                details["browser"] = json.loads(browser.stdout)
+                check("browser_setup_parity", operate(binary, scripted, "inspect")["settings"],
                   operate(binary, guided, "inspect")["settings"])
         finally:
             stop(guide)
     else:
         details["browser"] = {"verdict": "UNVERIFIED", "reason": "headless browser unavailable"}
+
+    def inspect_http(url, data=None, headers=None):
+        request = urllib.request.Request(url, data=data, headers=headers or {})
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return response.status, response.headers
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers
+
+    before_browser_controls = operate(binary, guided, "inspect")
+    guide_ready = root / "security-ready"
+    isolated_guide, address = start([binary, "operator", "guide", "--authority", guided,
+                                     "--ready", guide_ready, "--seconds", "2"], guide_ready)
+    try:
+        site = urllib.parse.urlsplit(address["url"])
+        origin = f"{site.scheme}://{site.netloc}"
+        check("guide_missing_session_denied", 403, inspect_http(origin + "/apply", b"confirmed=yes")[0])
+        status, headers = inspect_http(address["url"])
+        check("guide_single_launch", 200, status)
+        cookie = headers["Set-Cookie"].split(";")[0]
+        check("guide_launch_replay_denied", 403, inspect_http(address["url"])[0])
+        check("guide_wrong_origin_denied", 403, inspect_http(origin + "/apply", b"confirmed=yes",
+              {"Origin": "http://untrusted.test", "Cookie": cookie})[0])
+        check("guide_unapproved_mutation_denied", 422, inspect_http(origin + "/apply", b"confirmed=yes",
+              {"Origin": origin, "Cookie": cookie})[0])
+        time.sleep(2.1)
+        check("guide_expired_session_denied", 403,
+              inspect_http(origin + "/apply", b"confirmed=yes", {"Origin": origin, "Cookie": cookie})[0])
+        check("guide_security_denials_preserve_state", before_browser_controls, operate(binary, guided, "inspect"))
+    finally:
+        stop(isolated_guide)
 
     # Fixture-local child roots trust only the public issuer bundle.
     bundle = root / "fixture-ca-bundle.pem"
@@ -188,7 +229,7 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
             processes.append(proc)
             cards[name] = card(root, name, load(cfg), observed)
         for name in cards:
-            check(name + "_locally_accepted", "locally_enrolled",
+            check(name + "_locally_accepted", "applied",
                   enroll(binary, root, load(client), cards[name], name)["decision"])
         def request(executable, operator, label, action="fixture.read"):
             return exchange(executable, client, operator, "life.reference", action, label)
@@ -207,7 +248,7 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         proc, recovered = start([binary, "node", "start", "--config", ref, "--ready-out", ready], ready)
         processes.append(proc)
         new_card = card(root, "reference-recovered", load(ref), recovered)
-        check("reference_recovery_distinct_exchange", ["locally_enrolled", "commonwealth-reference-v1"],
+        check("reference_recovery_distinct_exchange", ["applied", "commonwealth-reference-v1"],
               [enroll(binary, root, load(client), new_card, "reference-recovered")["decision"],
                request(binary, "life-reference", "reference-recovered").get("result")])
 
@@ -218,7 +259,8 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
             chosen = targets[choice]
             profile = load(chosen / "profile.json")
             old = operate(binary, scripted, "inspect").get("selected_configuration")
-            candidate = {**profile, "configuration": str(chosen)}
+            candidate = {"candidate_sha256": load(chosen / ".release-proof.json")["release_sha256"],
+                         "configuration": str(chosen)}
             operation = "rollback" if label == "rollback" else "upgrade"
             plan, permit = approval(binary, scripted, root, label, operation, target, candidate)
             result = apply(binary, scripted, target, plan, permit)
@@ -247,7 +289,7 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
                                 extension / "contract.json", "--ready", ready], ready)
         processes.append(proc)
         extension_card = card(root, "extension", load(ext_conf), observed)
-        check("extension_operator_publication_accepted", "locally_enrolled",
+        check("extension_operator_publication_accepted", "applied",
               enroll(binary, root, load(client), extension_card, "extension")["decision"])
         for label, version in (("extension-first", 1), ("extension-unsupported", 2), ("extension-after", 1)):
             r = exchange(binary, client, "ext-operator", "extension.status", "status.read", label, version)
@@ -261,18 +303,15 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         for process in reversed(processes):
             stop(process)
 
-    for label, action, body in [
-        ("enroll", "enroll", {"operator": "life-reference", "operator_sha256": "fixture-operator",
-         "publication_sha256": "fixture-publication", "serving_sha256": "fixture-host",
-         "locator": "fixture-local", "protocol": 1}),
-        ("exit", "exit", {"operator": "life-reference"}),
-    ]:
-        plan, permit = approval(binary, scripted, root, label, action, target, body)
-        if label == "enroll":
-            change = root / "changed-card"
-            write(change, {**load(plan), "payload": {**body, "locator": "changed"}})
-            check("changed_complete_card_denied", "peer_card_changed", apply(binary, scripted, target, change, permit)["reason"])
-        check(label + "_authority_operation", "applied", apply(binary, scripted, target, plan, permit)["decision"])
+    approved = approved_card(new_card)
+    plan, permit = approval(binary, scripted, root, "enroll-check", "enroll", target, approved)
+    change = root / "changed-card"
+    write(change, {**load(plan), "payload": {**approved, "endpoint": ["127.0.0.1", 1]}})
+    check("changed_complete_card_denied", "peer_card_changed", apply(binary, scripted, target, change, permit)["reason"])
+    plan, permit = approval(binary, scripted, root, "exit", "exit", target, {"operator": "life-reference"})
+    check("exit_authority_operation", "applied", apply(binary, scripted, target, plan, permit)["decision"])
+    check("exited_peer_rejected_at_installed_client", "peer_not_enrolled",
+          exchange(binary, client, "life-reference", "life.reference", "fixture.read", "exited").get("reason"))
     state = operate(binary, scripted, "inspect")
     restored = {"data": "older-application"}
     payload = {"application": restored, "backup_sha256": sha(canonical(restored)), "binding_revision": 2,
@@ -283,8 +322,10 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
     plan, permit = approval(binary, scripted, root, "restore", "restore", target, payload)
     check("restore_approved_state", "applied", apply(binary, scripted, target, plan, permit)["decision"])
     newer = operate(binary, scripted, "inspect")
-    check("restore_preserves_exit_and_revision", [["life-reference"], {}, 2, restored],
-          [newer["withdrawn"], newer["peers"], newer["binding_floor"], newer["application"]])
+    check("restore_preserves_exit_and_revision", [["life-reference"], False, 2, restored],
+          [newer["withdrawn"], "life-reference" in newer["peers"], newer["binding_floor"], newer["application"]])
+    check("exited_peer_rejected_after_older_state_restore", "peer_not_enrolled",
+          exchange(binary, client, "life-reference", "life.reference", "fixture.read", "exit-after-restore").get("reason"))
 
     # The host process has no ability to read the private authority. It consumes
     # a separate public workspace and an allowlisted reviewed diagnostic.
@@ -303,8 +344,22 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         done = run("sudo", "-n", "runuser", "-u", "nobody", "--", "python3", public / "host9.py",
                    codex, public, public / "host.json", limit=28)
         host_report = public / "host.json"
-        details["host"] = load(host_report) if host_report.exists() else {
+        details["host"] = load(host_report) if host_report.exists() and host_report.stat().st_size else {
             "verdict": "UNVERIFIED", "exit": done.returncode}
+        proposed = public / "proposed-plan.json"
+        shutil.copyfile(plan, proposed)
+        public_kit = public / "verified-kit"
+        shutil.copytree(targets["step9-base"], public_kit)
+        public_binary = public_kit / "bin/commonwealth"
+        public_kit.chmod(0o755)
+        for directory in public_kit.rglob("*"):
+            if directory.is_dir():
+                directory.chmod(0o755)
+        prior = operate(binary, scripted, "inspect")
+        proposal = command("sudo", "-n", "runuser", "-u", "nobody", "--", public_binary,
+                 "operator", "apply", "--authority", scripted, "--plan", proposed, "--target", target)
+        check("host_unapproved_change_denied_by_installed_cli", ["approval_required", prior],
+              [proposal.get("reason"), operate(binary, scripted, "inspect")])
         public_bytes = b"".join(p.read_bytes() for p in (ws / "operator-help").rglob("*") if p.is_file())
         check("public_material_contains_no_secret_canary", False,
               canary.encode() in (public_bytes + canonical(diagnostic) + canonical(details["host"])))
