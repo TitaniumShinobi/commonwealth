@@ -125,7 +125,30 @@ def exchange(binary, config_path, peer, service, action, request_id, version=1):
                    "--request-id", request_id, "--wire-version", version)
 
 
-def network_lifecycle(binary, root, client, reference, control):
+def browser_apply(binary, root, boot, chrome, authority, target, operation, body, expected, guided_observations):
+    if not chrome:
+        return None
+    for attempt in range(2):
+        address = root / f"guide-{len(guided_observations)}-{attempt}"
+        guide, ready = start([binary, "operator", "guide", "--authority", authority, "--ready", address], address)
+        try:
+            browser = subprocess.run(
+                [os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome, ready["url"], str(target),
+                 operation, canonical(body).decode(), expected], capture_output=True, timeout=20)
+            if browser.returncode == 0:
+                events = json.loads(browser.stdout)
+                guided_observations.append({"operation": operation, "clicks": events})
+                return events[-1]
+        except subprocess.TimeoutExpired:
+            pass
+        finally:
+            stop(guide)
+    guided_observations.append({"operation": operation, "verdict": "UNVERIFIED"})
+    return None
+
+
+
+def network_lifecycle(binary, root, client, reference, control, browser=None):
     owner = Path(load(reference)["authority"])
     reader = Path(load(client)["authority"])
     old = root / "fenced-old.json"
@@ -150,6 +173,12 @@ def network_lifecycle(binary, root, client, reference, control):
         return {"operator": value["operator"], "service": value["service"], "generation": value["generation"],
                 "certificate": sha(cert), "application": value["application"]}
     def commit(authority, label, operation, target, body):
+        if browser:
+            boot, chrome, clicks = browser
+            result = browser_apply(binary, root, boot, chrome, authority, target, operation, body, "applied", clicks)
+            if result is None:
+                raise RuntimeError("guided network operation unverified: " + label)
+            return result
         plan, permit = approval(binary, authority, root, label, operation, target, body)
         return apply(binary, authority, target, plan, permit)
     def wire(config, endpoint, fingerprint, identifier, action):
@@ -164,7 +193,7 @@ def network_lifecycle(binary, root, client, reference, control):
         path = card(root, label, load(config), ready)
         return {**approved_card(path), "revision": revision}
     def score(label, expected, observed):
-        check("network_" + label, expected, observed)
+        check(("guided_network_" if browser else "network_") + label, expected, observed)
 
     old_id = identity(old)
     score("activate", "applied", commit(owner, "network-activate", "service-activate", old_app,
@@ -227,7 +256,9 @@ def network_lifecycle(binary, root, client, reference, control):
         score("client_enroll", "applied", commit(reader, "network-peer", "enroll", reader, peer)["decision"])
         score("destination_enroll", "applied", commit(owner, "network-client-peer", "enroll", owner, other)["decision"])
         def read(label):
-            return exchange(binary, client, old_config["operator"], "life.reference", "fixture.read", label)
+            payload = {"peer": old_config["operator"], "service": "life.reference", "action": "fixture.read",
+                       "request_id": label}
+            return commit(reader, label, "exchange", reader, payload)["exchange"]
         score("baseline_read", ["recoverable-version", 1],
               [read("baseline-network").get("result"), read("baseline-revision").get("binding_revision")])
         relay_code = ("import json,sys;sys.path.insert(0,sys.argv[1]);from network9 import relay;"
@@ -360,25 +391,8 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
     details = {"diagnostic": diagnostic}
     guided_observations = []
     def guided_apply(operation, body, expected):
-        if not chrome:
-            return None
-        for attempt in range(2):
-            address = root / f"guide-{len(guided_observations)}-{attempt}"
-            guide, ready = start([binary, "operator", "guide", "--authority", guided, "--ready", address], address)
-            try:
-                browser = subprocess.run(
-                    [os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome, ready["url"], str(target),
-                     operation, canonical(body).decode(), expected], capture_output=True, timeout=20)
-                if browser.returncode == 0:
-                    events = json.loads(browser.stdout)
-                    guided_observations.append({"operation": operation, "clicks": events})
-                    return events[-1]
-            except subprocess.TimeoutExpired:
-                pass
-            finally:
-                stop(guide)
-        guided_observations.append({"operation": operation, "verdict": "UNVERIFIED"})
-        return None
+        return browser_apply(binary, root, boot, chrome, guided, target, operation, body,
+                             expected, guided_observations)
 
     configured = guided_apply("configure", {"name": "fixture-operator", "protocol": 1}, "applied")
     if configured:
@@ -423,18 +437,20 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
 
     # Fixture-local child roots trust only the public issuer bundle.
     bundle = root / "fixture-ca-bundle.pem"
-    paths = [x / "node.json" for x in (scripted, reference, counterpart, ext)]
+    paths = [x / "node.json" for x in (scripted, reference, counterpart, ext, guided)]
     bundle.write_bytes(b"".join(Path(load(path)["ca"]).read_bytes() for path in paths))
     for path in paths:
         write(path, {**load(path), "ca": str(bundle)})
-    client, ref, local, ext_conf = paths
+    client, ref, local, ext_conf, guided_client = paths
     grant = sha(subprocess.check_output(["openssl", "x509", "-in", load(client)["client_certificate"], "-outform", "DER"]))
+    guided_grant = sha(subprocess.check_output(["openssl", "x509", "-in",
+              load(guided_client)["client_certificate"], "-outform", "DER"]))
     processes = []
     try:
         cards = {}
         for name, cfg in (("reference", ref), ("counterpart", local)):
             ready = root / (name + "-ready")
-            write(cfg, {**load(cfg), "participant_grants": [grant]})
+            write(cfg, {**load(cfg), "participant_grants": [grant, guided_grant]})
             proc, observed = start([binary, "node", "start", "--config", cfg, "--ready-out", ready], ready)
             processes.append(proc)
             exported = operate(binary, Path(load(cfg)["authority"]), "export-card", "--ready", ready,
@@ -527,6 +543,24 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
         write(dedicated_config, {**separate, "ca": str(bundle)})
         details["network_lifecycle"] = network_lifecycle(binary, root, client, dedicated_config,
                                                            "local-counterpart")
+        guided_root = root / "guided-network"
+        guided_root.mkdir()
+        guided_owner = guided_root / "authority"
+        operate(binary, guided_owner, "bootstrap", "--name", "guided-fenced-service")
+        guided_owner_config = guided_owner / "node.json"
+        owner_config = load(guided_owner_config)
+        bundle.write_bytes(bundle.read_bytes() + Path(owner_config["ca"]).read_bytes())
+        write(guided_owner_config, {**owner_config, "ca": str(bundle)})
+        guided_binary = targets["guided-base"] / "bin/commonwealth"
+        guided_clicks = []
+        peer = approved_card(cards["counterpart"])
+        enrolled = browser_apply(guided_binary, guided_root, boot, chrome, guided, guided, "enroll",
+                                 peer, "applied", guided_clicks)
+        if enrolled:
+            details["guided_network_lifecycle"] = network_lifecycle(
+                guided_binary, guided_root, guided_client, guided_owner_config, "local-counterpart",
+                (boot, chrome, guided_clicks))
+        details["guided_network_clicks"] = guided_clicks
         approved = approved_card(new_card)
         plan, permit = approval(binary, scripted, root, "enroll-check", "enroll", target, approved)
         change = root / "changed-card"
@@ -623,6 +657,10 @@ def main():
             for name, version in (("step9-base", "0.1.0-test.2"), ("step9-upgrade", "0.1.0-test.3"),
                                   ("step9-incompatible", "0.1.0-test.3")):
                 targets[name], installations[name] = install(boot, release, root, name, version, args.revision)
+            guided_root = root / "guided-install"
+            guided_root.mkdir()
+            targets["guided-base"], installations["guided-base"] = install(boot, release, guided_root,
+                "step9-base", "0.1.0-test.2", args.revision)
             detail = {"installations": installations, **lifecycle(targets["step9-base"] / "bin/commonwealth",
                       root, targets, boot, args.chrome, args.codex)}
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:

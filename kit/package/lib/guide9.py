@@ -38,7 +38,8 @@ def serve(directory, ready, seconds=45):
                 f'<input name="csrf" type="hidden" value="{csrf}">'
                 '<label>Action <select name="action">'
                 + "".join(f'<option>{op}</option>' for op in
-                          ("configure", "enroll", "exit", "upgrade", "rollback", "restore"))
+                          ("configure", "enroll", "exit", "upgrade", "rollback", "restore", "exchange",
+                           "service-activate", "service-backup", "service-fence", "service-restore"))
                 + '</select></label><label>Target <input name="target" id="target"></label>'
                   '<label>Typed payload <textarea name="payload" id="payload"></textarea></label>'
                   '<button id="plan-button">Review plan</button></form>'

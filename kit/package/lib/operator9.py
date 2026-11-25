@@ -53,7 +53,7 @@ def make_plan(directory, action, target, payload):
     path = Path(target)
     if not path.is_absolute():
         raise Denied("target_must_be_absolute")
-    if action not in ("configure", "enroll", "exit", "upgrade", "rollback", "restore", "service-activate", "service-backup", "service-fence", "service-restore"):
+    if action not in ("configure", "enroll", "exit", "upgrade", "rollback", "restore", "service-activate", "service-backup", "service-fence", "service-restore", "exchange"):
         raise Denied("unsupported_action")
     return {"actor": "local-operator", "action": action, "target": str(path.resolve()),
             "release_sha256": release(), "payload": payload,
@@ -186,7 +186,20 @@ def apply(directory, plan, approval, target):
             raise Denied("approval_expired")
         result = {"decision": "applied", "operation_id": approval["operation_id"],
                   "action": plan["action"], "target": plan["target"]}
-        updated = mutate(authority, plan)
+        if plan["action"] == "exchange":
+            from argparse import Namespace
+            from runtime import exchange
+            body = plan["payload"]
+            if set(body) != {"peer", "service", "action", "request_id"} or body["action"] != "fixture.read":
+                raise Denied("exchange_payload_invalid")
+            config = Path(directory).resolve() / "node.json"
+            try:
+                result["exchange"] = exchange(Namespace(config=config, state=None, wire_version=1, **body))
+            except ValueError as exc:
+                result["exchange"] = {"decision": "rejected", "reason": str(exc)}
+            updated = authority
+        else:
+            updated = mutate(authority, plan)
         db.execute("UPDATE state SET body=? WHERE id=1", (canonical(updated).decode(),))
         db.execute("UPDATE decisions SET result=? WHERE id=?",
                    (canonical(result).decode(), approval["operation_id"]))
