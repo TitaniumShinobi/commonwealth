@@ -188,7 +188,7 @@ Keep the original enrollment throughout. The two signed binding digests in the e
 
 ## Execute the fenced restore
 
-Use the installed loopback fixture with an active broker-backed generation-1 listener, an enrolled reader, and an unrelated enrolled counterpart. The cloud fixture sets up those processes with the installed Kit and separates the old listener's OS account from the authority. For this procedure, `$OWNER` is the serving authority directory, `$OLD_CONFIG` is its protected generation-1 configuration, and `$OLD_READY` is the running old listener's readiness file. `$REPLACEMENT` and `$WORK/restored-app.json` must be absent. Keep the old listener and its authority broker running throughout.
+Use the installed loopback fixture with an active broker-backed generation-1 listener, an enrolled reader, and an unrelated enrolled counterpart. Keep the reader listener running and set `$CLIENT_READY` to its original readiness file. The cloud fixture sets up those processes with the installed Kit and separates the old listener's OS account from the authority. For this procedure, `$OWNER` is the serving authority directory, `$OLD_CONFIG` is its protected generation-1 configuration, and `$OLD_READY` is the running old listener's readiness file. `$REPLACEMENT` and `$WORK/restored-app.json` must be absent. Keep the old listener and its authority broker running throughout.
 
 ```bash
 "$BIN" operator bootstrap --authority "$REPLACEMENT" --name replacement-host
@@ -216,19 +216,87 @@ PY
 OLD_APP=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["identity"]["application"])' "$WORK/old-identity.json")
 NEW_APP="$WORK/restored-app.json"
 apply_plan() {
-  action=$1 payload=$2 target=$3
+  local action=$1 payload=$2 target=$3 label=${4:-$1}
   "$BIN" operator plan --authority "$OWNER" --operation "$action" --target "$target" \
-    --payload "$payload" --out "$WORK/$action-plan.json" || return
-  cat "$WORK/$action-plan.json"
+    --payload "$payload" --out "$WORK/$label-plan.json" >&2 || return
+  cat "$WORK/$label-plan.json" >&2
   read -r -p "Type approve to apply this plan: " answer
   [ "$answer" = approve ] || return 1
-  "$BIN" operator approve --authority "$OWNER" --plan "$WORK/$action-plan.json" \
-    --confirm --out "$WORK/$action-approval.json" || return
-  "$BIN" operator apply --authority "$OWNER" --plan "$WORK/$action-plan.json" \
-    --approval "$WORK/$action-approval.json" --target "$target"
+  "$BIN" operator approve --authority "$OWNER" --plan "$WORK/$label-plan.json" \
+    --confirm --out "$WORK/$label-approval.json" >&2 || return
+  "$BIN" operator apply --authority "$OWNER" --plan "$WORK/$label-plan.json" \
+    --approval "$WORK/$label-approval.json" --target "$target"
 }
+sha256sum "$OLD_APP" > "$WORK/old-application-before.sha256"
 apply_plan service-backup "$WORK/old-identity.json" "$OLD_APP"
+```
+
+For the guided route, run the same payload-generation commands. Instead of each `apply_plan` command, open the installed guide under the stated authority, select the same operation, enter the stated **Target**, and paste the referenced JSON payload. Click **Review plan**, inspect it, then click **Approve reviewed plan** and **Apply approved plan**. Start with `service-backup` under `$OWNER`, targeting `$OLD_APP`.
+
+### Withdraw both directions before fencing
+
+After backup, generate one `exit` payload per authority. Each local operator approves only its own withdrawal. The peer names come from the running listener readiness files.
+
+```bash
+python3 - "$OLD_READY" "$CLIENT_READY" "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+old, reader, work = map(Path, sys.argv[1:])
+for label, ready in (("reader-exit", old), ("owner-exit", reader)):
+    operator = json.loads(ready.read_text())["operator"]
+    (work / (label + ".json")).write_text(json.dumps({"operator": operator}))
+PY
+OWNER="$CLIENT" apply_plan exit "$WORK/reader-exit.json" "$CLIENT" reader-exit
+apply_plan exit "$WORK/owner-exit.json" "$OWNER" owner-exit
+```
+
+In the browser, first open the reader's guide under `$CLIENT`, choose `exit`, target `$CLIENT`, and paste `reader-exit.json`. Then open the serving guide under `$OWNER`, choose `exit`, target `$OWNER`, and paste `owner-exit.json`. Review, approve, and apply each plan separately. Both decisions must be `applied`.
+
+Verify the reader's installed `exchange` handler rejects the withdrawn peer. Use the same `exchange` payload and three guided buttons under `$CLIENT` for the browser route. The expected result is nested under `exchange`.
+
+```bash
+python3 - "$OLD_READY" > "$WORK/post-exit.json" <<'PY'
+import json, sys
+ready = json.load(open(sys.argv[1]))
+print(json.dumps({"peer": ready["operator"], "service": ready["service"],
+                  "action": "fixture.read", "request_id": "post-exit"}))
+PY
+OWNER="$CLIENT" apply_plan exchange "$WORK/post-exit.json" "$CLIENT" post-exit > "$WORK/post-exit-receipt.json"
+python3 - "$WORK/post-exit-receipt.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1]))["exchange"]
+assert result == {"decision": "rejected", "reason": "peer_not_enrolled"}, result
+PY
+```
+
+The approval stays interactive while standard output contains the receipt. Next, probe the old listener directly to verify the destination independently denies the withdrawn reader.
+
+```bash
+probe_denial() {
+  python3 - "$TARGET/lib" "$CLIENT/node.json" "$1" "$2" "$3" "$4" <<'PY'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from runtime import call, read_config
+ready = json.loads(Path(sys.argv[3]).read_text())
+request = {"operation": "request", "protocol": 1, "service": ready["service"],
+           "action": sys.argv[6], "request_id": sys.argv[5], "value": "unauthorized-replacement"}
+result = call(read_config(sys.argv[2]), ready["endpoint"], request, ready["serving_sha256"])
+assert result["reason"] == sys.argv[4] and not result["mutated"] and "result" not in result, result
+print(json.dumps(result))
+PY
+}
+probe_denial "$OLD_READY" destination_policy withdrawn fixture.read
+```
+
+### Fence, restore, and test stale authority
+
+For the guided route, use the serving authority's guide for `service-fence` with `old-identity.json` and target `$OLD_APP`. Run the same direct read and write probes on the still-running old listener before proceeding.
+
+```bash
 apply_plan service-fence "$WORK/old-identity.json" "$OLD_APP"
+probe_denial "$OLD_READY" generation_fenced fenced-read fixture.read
+probe_denial "$OLD_READY" generation_fenced fenced-write fixture.write
 "$BIN" operator inspect --authority "$OWNER" > "$WORK/authority-fenced.json"
 python3 - "$WORK" <<'PY'
 import json, sys
@@ -242,45 +310,54 @@ payload["backup_sha256"] = state["service_backup"]["sha256"]
 PY
 test ! -e "$NEW_APP"
 apply_plan service-restore "$WORK/service-restore.json" "$NEW_APP"
+```
+
+For the guided restore, select `service-restore` under `$OWNER`, use `service-restore.json`, and target `$NEW_APP`. Review the backup digest and replacement identity before approving and applying. For both routes, start the replacement in a separate terminal and wait for its fresh readiness file.
+
+```bash
 "$BIN" node start --config "$WORK/replacement.json" --ready-out "$WORK/replacement-ready.json"
 ```
 
-For the guided route, run the same payload-generation commands. Open the installed guide under `$OWNER`. For backup and fence select `service-backup` and `service-fence` with the contents of `old-identity.json` and **Target** set to `$OLD_APP`. For restore select `service-restore` with `service-restore.json` and **Target** set to `$NEW_APP`. For each operation click **Review plan**, inspect the identity and target, then click **Approve reviewed plan** and **Apply approved plan**. Start the replacement listener in a separate terminal as shown in the CLI route.
-
-With the replacement listening, use the earlier `export-card` command with `--authority "$OWNER" --ready "$WORK/replacement-ready.json" --out "$WORK/replacement-public"`. Add `"revision": 2` to the exported `card.json` before the reader reviews it. Use the documented `enroll` plan, approval, and apply sequence under `$CLIENT` with this card as the payload. For the guided equivalent select `enroll`, use the same payload and target, and complete the same three buttons. If the reader was withdrawn during the fixture, the serving authority also requires a fresh approval of the reader card at revision 2. Before renewing it, run this direct replacement probe. It must return `destination_policy`.
+**Before either side renews enrollment**, compare the preserved authority state and prove the replacement rejects the original reader.
 
 ```bash
-python3 - "$TARGET/lib" "$CLIENT/node.json" "$WORK/replacement-ready.json" <<'PY'
+probe_denial "$WORK/replacement-ready.json" destination_policy restore-stale fixture.read
+"$BIN" operator inspect --authority "$OWNER" > "$WORK/authority-restored.json"
+python3 - "$WORK" <<'PY'
 import json, sys
 from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from runtime import call, read_config
-ready = json.loads(Path(sys.argv[3]).read_text())
-request = {"operation": "request", "protocol": 1, "service": ready["service"],
-           "action": "fixture.read", "request_id": "restore-stale"}
-result = call(read_config(sys.argv[2]), ready["endpoint"], request, ready["serving_sha256"])
-assert result["reason"] == "destination_policy" and "result" not in result
-print(json.dumps(result))
+work = Path(sys.argv[1])
+before = json.loads((work / "authority-fenced.json").read_text())
+after = json.loads((work / "authority-restored.json").read_text())
+assert before["withdrawn"] == after["withdrawn"]
+assert before["peer_binding_floors"] == after["peer_binding_floors"]
+assert after["binding_floor"] == 2
 PY
 ```
 
-Renew only after that denial, using the same three-step approval sequence on the serving authority with the reviewed reader card. The reader card keeps the reader’s service identity and uses revision 2 for the renewed enrollment.
+### Renew both directions and verify recovery
+
+After the stale-reader denial, export both cards from the running listeners. Create revision-2 copies for the two independent enrollment reviews.
 
 ```bash
-python3 - "$TARGET/lib" "$CLIENT/node.json" "$OLD_READY" <<'PY'
+"$BIN" operator export-card --authority "$OWNER" --ready "$WORK/replacement-ready.json" --out "$WORK/replacement-public"
+"$BIN" operator export-card --authority "$CLIENT" --ready "$CLIENT_READY" --out "$WORK/reader-public"
+python3 - "$WORK" <<'PY'
 import json, sys
 from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from runtime import call, read_config
-config = read_config(sys.argv[2])
-ready = json.loads(Path(sys.argv[3]).read_text())
-for action in ("fixture.read", "fixture.write"):
-    request = {"operation": "request", "protocol": 1, "service": ready["service"],
-               "action": action, "request_id": "fenced-" + action, "value": "unauthorized-replacement"}
-    result = call(config, ready["endpoint"], request, ready["serving_sha256"])
-    assert result["reason"] == "generation_fenced" and not result["mutated"] and "result" not in result
-    print(json.dumps(result))
+work = Path(sys.argv[1])
+for role in ("replacement", "reader"):
+    card = json.loads((work / (role + "-public") / "card.json").read_text())
+    card["revision"] = 2
+    (work / (role + "-enroll.json")).write_text(json.dumps(card))
 PY
+OWNER="$CLIENT" apply_plan enroll "$WORK/replacement-enroll.json" "$CLIENT" replacement-enroll
+apply_plan enroll "$WORK/reader-enroll.json" "$OWNER" reader-enroll
+```
+
+In the browser select `enroll` first under `$CLIENT`, targeting `$CLIENT` with `replacement-enroll.json`. Then select `enroll` under `$OWNER`, targeting `$OWNER` with `reader-enroll.json`. Review and approve both separately. Verify the recovered read first, then repeat the old-generation probes and the control read.
+
+```bash
 PEER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["operator"])' "$WORK/replacement-ready.json")
 "$BIN" peer exchange --state "$CLIENT/peers.json" --config "$CLIENT/node.json" \
   --peer "$PEER" --service life.reference --action fixture.read --request-id network-recovered \
@@ -294,6 +371,9 @@ ready = json.loads((work / "replacement-ready.json").read_text())
 assert result["result"] == "recoverable-version" and result["binding_revision"] == 2
 assert result["endpoint_sha256"] == ready["serving_sha256"]
 PY
+probe_denial "$OLD_READY" generation_fenced restored-old-read fixture.read
+probe_denial "$OLD_READY" generation_fenced restored-old-write fixture.write
+sha256sum --check "$WORK/old-application-before.sha256"
 "$BIN" peer exchange --state "$CLIENT/peers.json" --config "$CLIENT/node.json" \
   --peer local-counterpart --service life.reference --action fixture.read --request-id network-control
 ```
