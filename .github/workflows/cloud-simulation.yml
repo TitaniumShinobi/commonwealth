@@ -57,7 +57,7 @@ jobs:
           python3 -m commonwealth_sim.replay "$root" || comparison=$?
           if [[ "$status" == 1 || "$replay" == 1 || "$comparison" == 1 ]]; then exit 1; fi
           if [[ "$status" != 0 || "$replay" != 0 || "$comparison" != 0 ]]; then exit 2; fi
-      - name: Run Step 7 deterministic preparation and corrected isolated gateway
+      - name: Run Step 7 deterministic preparation and isolated routed and bridge checks
         run: |
           root="$RUNNER_TEMP/commonwealth"
           model=0

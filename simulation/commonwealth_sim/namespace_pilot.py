@@ -2,6 +2,7 @@
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -130,7 +131,7 @@ def firewall(guest, wan, deny, close=False):
             f'iifname "lo" accept; iifname "cwm0" accept; iifname "{guest}" udp dport {{ 53, 67 }} accept; '
             f'iifname "{guest}" tcp dport 53 accept; }}\n}}\n'
             f'table ip cwnat {{ chain post {{ type nat hook postrouting priority srcnat; policy accept; '
-            f'oifname "{wan}" ip saddr 192.0.2.0/24 masquerade; }} }}\n')
+            f'oifname "{wan}" ip saddr 192.0.2.0/24 masquerade; }}\n}}\n')
 
 
 def bridge(deny=False):
@@ -211,10 +212,12 @@ def exercise(profile, config):
         digests["withdrawal"] = f.program("g", replace + denied)
         f.check("existing_tcp_stops_without_eviction", "blocked", f.line(client, send=True))
         f.check("new_flow_stops_without_eviction", False, f.ping("a", "203.0.113.2"))
-        f.check("routed_deny_counters", True, "192.0.2.10 counter packets" in
-                f.run("nft", "list", "chain", "inet", "cw", "forward", namespace="g").stdout)
+        f.check("routed_deny_counters", True, bool(re.search(r"ip saddr 192\.0\.2\.10 counter packets [1-9]",
+                    f.run("nft", "list", "chain", "inet", "cw", "forward", namespace="g").stdout)))
         f.program("l", "delete table bridge cwlan\n" + bridge(True))
-        f.check("withdrawn_bridge_port_blocks_local_path", False, f.ping("a", "192.0.2.1"))
+        f.check("withdrawn_bridge_path", False, f.ping("a", "192.0.2.1"))
+        f.check("bridge_deny_counter", True, bool(re.search(r'iifname "p1" counter packets [1-9]',
+                f.run("nft", "list", "chain", "bridge", "cwlan", "forward", namespace="l").stdout)))
         f.check("unaffected_control", True, f.ping("b", "203.0.113.2"))
         f.run("ip", "link", "set", wan, "down", namespace="g")
         f.check("wan_loss", False, f.ping("b", "203.0.113.2"))
