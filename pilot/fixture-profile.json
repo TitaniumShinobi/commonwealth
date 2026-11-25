@@ -1,0 +1,132 @@
+{
+  "environment": "synthetic",
+  "activation": "HELD",
+  "wan_handoff": "ethernet",
+  "upstream_profile": {
+    "selection": "fixture-only",
+    "candidates": [
+      "existing-authorized-host",
+      "fiber",
+      "terrestrial-radio",
+      "starlink"
+    ],
+    "addressing": "fixture-static",
+    "external_route": false
+  },
+  "interfaces": {
+    "guest": "cwg0",
+    "household": "cwh0",
+    "service": "cws0",
+    "management": "cwm0",
+    "wan": "cww0"
+  },
+  "zones": {
+    "guest": "192.0.2.0/24",
+    "household": "198.51.100.0/28",
+    "management": "198.51.100.16/28",
+    "service": "198.51.100.32/28",
+    "wan": "203.0.113.0/24"
+  },
+  "gateway": "192.0.2.1",
+  "resolver": "192.0.2.1",
+  "dhcp_pool": [
+    "192.0.2.10",
+    "192.0.2.90"
+  ],
+  "participant_ipv6": false,
+  "participant_router_advertisements": false,
+  "local_management": true,
+  "authenticated_session_mapping": true,
+  "enforcement_paths": [
+    "ipv4-local",
+    "ipv4-wan",
+    "local-bridge"
+  ],
+  "participant_price_minor": 0,
+  "equipment": {
+    "handoff": {
+      "model": "synthetic-handoff",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "gateway": {
+      "model": "synthetic-gateway",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "switch": {
+      "model": "synthetic-switch",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "access_points": {
+      "model": "synthetic-access_points",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "management": {
+      "model": "synthetic-management",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "dhcp_dns": {
+      "model": "synthetic-dhcp_dns",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "power": {
+      "model": "synthetic-power",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "participant_device": {
+      "model": "synthetic-participant_device",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    },
+    "control_device": {
+      "model": "synthetic-control_device",
+      "revision": "fixture-1",
+      "interface": "synthetic-only",
+      "owner": "fixture-operator",
+      "power": "modeled",
+      "mode": "isolated"
+    }
+  },
+  "fixture_funding": {
+    "equipment": true,
+    "installation": true,
+    "uplink": true,
+    "overage": true,
+    "power": true,
+    "staffing": true,
+    "support": true,
+    "maintenance": true,
+    "spares": true,
+    "continuity": true
+  }
+}

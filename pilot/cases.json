@@ -1,0 +1,1239 @@
+{
+  "cases": {
+    "provisioning": [
+      {
+        "input": {
+          "action": "attach",
+          "credential": "bad",
+          "session": "bad",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": false
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "s1",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "status",
+          "component": "dhcp",
+          "online": false
+        },
+        "expect": {
+          "component": "dhcp",
+          "online": false
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s1",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": null
+        }
+      },
+      {
+        "input": {
+          "action": "status",
+          "component": "dhcp",
+          "online": true
+        },
+        "expect": {
+          "component": "dhcp",
+          "online": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s1",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": "192.0.2.10",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-2",
+          "session": "s2",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s2",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": null
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s2",
+          "address": "192.0.2.11"
+        },
+        "expect": {
+          "lease": "192.0.2.11",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "public",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      }
+    ],
+    "resolver": [
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "s1",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s1",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": "192.0.2.10",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "resolve",
+          "session": "s1",
+          "name": "cached.test",
+          "tick": 1
+        },
+        "expect": {
+          "resolved": true,
+          "source": "recursion"
+        }
+      },
+      {
+        "input": {
+          "action": "status",
+          "component": "resolver",
+          "online": false
+        },
+        "expect": {
+          "component": "resolver",
+          "online": false
+        }
+      },
+      {
+        "input": {
+          "action": "resolve",
+          "session": "s1",
+          "name": "cached.test",
+          "tick": 3
+        },
+        "expect": {
+          "resolved": true,
+          "source": "cache"
+        }
+      },
+      {
+        "input": {
+          "action": "resolve",
+          "session": "s1",
+          "name": "fresh.test",
+          "tick": 3
+        },
+        "expect": {
+          "resolved": false
+        }
+      },
+      {
+        "input": {
+          "action": "resolve",
+          "session": "s1",
+          "name": "cached.test",
+          "tick": 4
+        },
+        "expect": {
+          "resolved": false
+        }
+      },
+      {
+        "input": {
+          "action": "status",
+          "component": "resolver",
+          "online": true
+        },
+        "expect": {
+          "component": "resolver",
+          "online": true
+        }
+      },
+      {
+        "input": {
+          "action": "resolve",
+          "session": "s1",
+          "name": "fresh.test",
+          "tick": 5
+        },
+        "expect": {
+          "resolved": true,
+          "source": "recursion"
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "recovery",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      }
+    ],
+    "isolation": [
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "s1",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s1",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": "192.0.2.10",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-2",
+          "session": "s2",
+          "ap": "ap-2"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s2",
+          "address": "192.0.2.11"
+        },
+        "expect": {
+          "lease": "192.0.2.11",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "guest",
+          "destination": "guest",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "household",
+          "destination": "household",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "service",
+          "destination": "service",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "management",
+          "destination": "management",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "local-bridge",
+          "destination": "local-bridge",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "control",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      }
+    ],
+    "withdrawal": [
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "s1",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s1",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": "192.0.2.10",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-2",
+          "session": "s2",
+          "ap": "ap-2"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s2",
+          "address": "192.0.2.11"
+        },
+        "expect": {
+          "lease": "192.0.2.11",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "copy",
+          "ap": "ap-2"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "copy",
+          "address": "192.0.2.12"
+        },
+        "expect": {
+          "lease": "192.0.2.12",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "existing",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "copy",
+          "name": "copy",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s2",
+          "name": "control",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      },
+      {
+        "input": {
+          "action": "withdraw",
+          "credential": "device-1"
+        },
+        "expect": {
+          "affected_sessions": [
+            "copy",
+            "s1"
+          ],
+          "cleared_flows": [
+            "copy",
+            "existing"
+          ],
+          "evicted": false,
+          "ordering": [
+            "persist_deny_both_directions",
+            "clear_connection_state",
+            "deny_future_admission",
+            "observe_eviction_separately"
+          ]
+        }
+      },
+      {
+        "input": {
+          "action": "observe",
+          "session": "s1",
+          "flow": "existing"
+        },
+        "expect": {
+          "associated": true,
+          "lease": "192.0.2.10",
+          "flow_exists": false,
+          "management": true
+        }
+      },
+      {
+        "input": {
+          "action": "observe",
+          "session": "copy",
+          "flow": "copy"
+        },
+        "expect": {
+          "associated": true,
+          "lease": "192.0.2.12",
+          "flow_exists": false,
+          "management": true
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "existing",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "existing",
+          "destination": "synthetic-wan",
+          "direction": "inbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "copy",
+          "name": "new-copy",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "copy",
+          "name": "bridge",
+          "destination": "local-bridge",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "future",
+          "ap": "ap-2"
+        },
+        "expect": {
+          "admitted": false
+        }
+      },
+      {
+        "input": {
+          "action": "roam",
+          "session": "copy",
+          "ap": "ap-3",
+          "address": "192.0.2.77"
+        },
+        "expect": {
+          "associated": true,
+          "forwarding_eligible": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "copy",
+          "name": "new-address",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "restart",
+          "mapping_verified": false
+        },
+        "expect": {
+          "mapping_verified": false,
+          "withdrawn": [
+            "device-1"
+          ]
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s2",
+          "name": "unverified-mapping",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "restart",
+          "mapping_verified": true
+        },
+        "expect": {
+          "mapping_verified": true,
+          "withdrawn": [
+            "device-1"
+          ]
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "post-restart",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "copy",
+          "name": "post-restart-copy",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s2",
+          "name": "unaffected",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      }
+    ],
+    "interruption": [
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "s1",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s1",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": "192.0.2.10",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-2",
+          "session": "s2",
+          "ap": "ap-2"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s2",
+          "address": "192.0.2.11"
+        },
+        "expect": {
+          "lease": "192.0.2.11",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "active",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      },
+      {
+        "input": {
+          "action": "status",
+          "component": "uplink",
+          "online": false
+        },
+        "expect": {
+          "component": "uplink",
+          "online": false
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s2",
+          "name": "outage",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      },
+      {
+        "input": {
+          "action": "observe",
+          "session": "s1",
+          "flow": "active"
+        },
+        "expect": {
+          "associated": true,
+          "lease": "192.0.2.10",
+          "flow_exists": true,
+          "management": true
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "copied-during-loss",
+          "ap": "ap-2"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "withdraw",
+          "credential": "device-1"
+        },
+        "expect": {
+          "affected_sessions": [
+            "copied-during-loss",
+            "s1"
+          ],
+          "cleared_flows": [
+            "active"
+          ],
+          "evicted": false,
+          "ordering": [
+            "persist_deny_both_directions",
+            "clear_connection_state",
+            "deny_future_admission",
+            "observe_eviction_separately"
+          ]
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "rejoin",
+          "ap": "ap-2"
+        },
+        "expect": {
+          "admitted": false
+        }
+      },
+      {
+        "input": {
+          "action": "status",
+          "component": "uplink",
+          "online": true
+        },
+        "expect": {
+          "component": "uplink",
+          "online": true
+        }
+      },
+      {
+        "input": {
+          "action": "resolve",
+          "session": "s2",
+          "name": "fresh.test",
+          "tick": 6
+        },
+        "expect": {
+          "resolved": true,
+          "source": "recursion"
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s2",
+          "name": "restored",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": true
+        }
+      },
+      {
+        "input": {
+          "action": "forward",
+          "session": "s1",
+          "name": "stale",
+          "destination": "synthetic-wan",
+          "direction": "outbound"
+        },
+        "expect": {
+          "forwarded": false
+        }
+      }
+    ],
+    "crossing": [
+      {
+        "input": {
+          "action": "crossing",
+          "name": "unrelated",
+          "token": "other"
+        },
+        "expect": {
+          "allowed": true,
+          "disclosed": true,
+          "effects": 1
+        }
+      },
+      {
+        "input": {
+          "action": "close",
+          "name": "affected"
+        },
+        "expect": {
+          "token": null,
+          "session": null,
+          "buffer": null,
+          "pending": [],
+          "effects": 0
+        }
+      },
+      {
+        "input": {
+          "action": "crossing",
+          "name": "affected",
+          "token": "old"
+        },
+        "expect": {
+          "allowed": false,
+          "disclosed": false,
+          "effects": 0
+        }
+      },
+      {
+        "input": {
+          "action": "crossing",
+          "name": "affected",
+          "token": "old"
+        },
+        "expect": {
+          "allowed": false,
+          "disclosed": false,
+          "effects": 0
+        }
+      },
+      {
+        "input": {
+          "action": "close",
+          "name": "affected"
+        },
+        "expect": {
+          "token": null,
+          "session": null,
+          "buffer": null,
+          "pending": [],
+          "effects": 0
+        }
+      },
+      {
+        "input": {
+          "action": "renew",
+          "name": "affected",
+          "token": "old",
+          "newly_authorized": true
+        },
+        "expect": {
+          "opened": false
+        }
+      },
+      {
+        "input": {
+          "action": "renew",
+          "name": "fresh",
+          "token": "new",
+          "newly_authorized": false
+        },
+        "expect": {
+          "opened": false
+        }
+      },
+      {
+        "input": {
+          "action": "renew",
+          "name": "fresh",
+          "token": "new",
+          "newly_authorized": true
+        },
+        "expect": {
+          "opened": true
+        }
+      },
+      {
+        "input": {
+          "action": "crossing",
+          "name": "fresh",
+          "token": "new"
+        },
+        "expect": {
+          "allowed": true,
+          "disclosed": true,
+          "effects": 1
+        }
+      },
+      {
+        "input": {
+          "action": "crossing",
+          "name": "unrelated",
+          "token": "other"
+        },
+        "expect": {
+          "allowed": true,
+          "disclosed": true,
+          "effects": 2
+        }
+      }
+    ],
+    "rollback": [
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "s1",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": true
+        }
+      },
+      {
+        "input": {
+          "action": "provision",
+          "session": "s1",
+          "address": "192.0.2.10"
+        },
+        "expect": {
+          "lease": "192.0.2.10",
+          "gateway": "192.0.2.1",
+          "resolver": "192.0.2.1"
+        }
+      },
+      {
+        "input": {
+          "action": "withdraw",
+          "credential": "device-1"
+        },
+        "expect": {
+          "affected_sessions": [
+            "s1"
+          ],
+          "cleared_flows": [],
+          "evicted": false,
+          "ordering": [
+            "persist_deny_both_directions",
+            "clear_connection_state",
+            "deny_future_admission",
+            "observe_eviction_separately"
+          ]
+        }
+      },
+      {
+        "input": {
+          "action": "stage",
+          "target": "wrong-site",
+          "baseline": "verified-baseline",
+          "candidate": "candidate-1"
+        },
+        "expect": {
+          "staged": false,
+          "issuing": false
+        }
+      },
+      {
+        "input": {
+          "action": "stage",
+          "target": "fixture-site",
+          "baseline": "verified-baseline",
+          "candidate": "candidate-1"
+        },
+        "expect": {
+          "staged": true,
+          "issuing": false
+        }
+      },
+      {
+        "input": {
+          "action": "apply_site",
+          "activation": null
+        },
+        "expect": {
+          "applied": false,
+          "reason": "fixture_has_no_activation_authority",
+          "issuing": false
+        }
+      },
+      {
+        "input": {
+          "action": "rollback",
+          "verified": false
+        },
+        "expect": {
+          "guest_path": "closed",
+          "baseline": "unverified",
+          "incident": true,
+          "withdrawn": [
+            "device-1"
+          ]
+        }
+      },
+      {
+        "input": {
+          "action": "rollback",
+          "verified": true
+        },
+        "expect": {
+          "guest_path": "closed",
+          "baseline": "verified",
+          "incident": false,
+          "withdrawn": [
+            "device-1"
+          ]
+        }
+      },
+      {
+        "input": {
+          "action": "attach",
+          "credential": "device-1",
+          "session": "stale",
+          "ap": "ap-1"
+        },
+        "expect": {
+          "admitted": false
+        }
+      }
+    ]
+  },
+  "invalid_profiles": [
+    [
+      "overlap",
+      {
+        "zones": {
+          "guest": "192.0.2.0/24",
+          "household": "192.0.2.0/24",
+          "management": "198.51.100.16/28",
+          "service": "198.51.100.32/28",
+          "wan": "203.0.113.0/24"
+        }
+      },
+      "overlapping_networks"
+    ],
+    [
+      "unknown interface",
+      {
+        "interfaces": {
+          "guest": "cwg0",
+          "household": "cwh0",
+          "service": "cws0",
+          "management": "typo",
+          "wan": "cww0"
+        }
+      },
+      "unknown_or_reused_interface"
+    ],
+    [
+      "mapping absent",
+      {
+        "authenticated_session_mapping": false
+      },
+      "session_mapping_or_paths"
+    ],
+    [
+      "funding absent",
+      {
+        "fixture_funding": {}
+      },
+      "funded_obligations"
+    ],
+    [
+      "activation missing",
+      {
+        "activation": null
+      },
+      "activation_or_environment"
+    ],
+    [
+      "no fees",
+      {
+        "participant_price_minor": 50
+      },
+      "participant_price"
+    ],
+    [
+      "ipv6 premature",
+      {
+        "participant_ipv6": true
+      },
+      "management_ipv6_or_handoff"
+    ]
+  ],
+  "readiness": [
+    [
+      "blank readiness",
+      {},
+      {
+        "target_forecast": "UNVERIFIED",
+        "ready_to_request_activation": "UNVERIFIED",
+        "activation": "HELD",
+        "field_acceptance": "UNVERIFIED"
+      }
+    ],
+    [
+      "model receipts do not satisfy evidence",
+      {
+        "readiness": {
+          "site_audience_and_permission": {
+            "scope": "synthetic",
+            "owner": "fixture",
+            "reference": "test"
+          },
+          "operator_support_and_recovery": {
+            "scope": "synthetic",
+            "owner": "fixture",
+            "reference": "test"
+          },
+          "funding_and_zero_price": {
+            "scope": "synthetic",
+            "owner": "fixture",
+            "reference": "test"
+          },
+          "permitted_upstream": {
+            "scope": "synthetic",
+            "owner": "fixture",
+            "reference": "test"
+          },
+          "equipment_power_and_interfaces": {
+            "scope": "synthetic",
+            "owner": "fixture",
+            "reference": "test"
+          },
+          "baseline_and_local_recovery": {
+            "scope": "synthetic",
+            "owner": "fixture",
+            "reference": "test"
+          },
+          "test_plan_limits_and_window": {
+            "scope": "synthetic",
+            "owner": "fixture",
+            "reference": "test"
+          }
+        }
+      },
+      {
+        "ready_to_request_activation": "UNVERIFIED",
+        "field_acceptance": "UNVERIFIED"
+      }
+    ],
+    [
+      "observed field violation cannot be erased by missing evidence",
+      {
+        "site_ref": "unit-test",
+        "configuration_ref": "unit-test-config",
+        "observations": {
+          "existing_forwarding_denial": {
+            "scope": "field",
+            "owner": "fixture evaluator",
+            "reference": "unit-test-only",
+            "observed_at": "synthetic",
+            "site_ref": "unit-test",
+            "configuration_ref": "unit-test-config",
+            "run_ref": "unit",
+            "vantage": "unit",
+            "criterion_ref": "unit",
+            "enforcement_boundary": "unit",
+            "observed_result": "forwarded",
+            "verdict": "FAIL"
+          }
+        }
+      },
+      {
+        "field_acceptance": "FAIL",
+        "activation": "HELD"
+      }
+    ]
+  ]
+}

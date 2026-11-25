@@ -1,0 +1,46 @@
+{
+  "target": "2026-11-30",
+  "site_ref": null,
+  "configuration_ref": null,
+  "readiness": {
+    "site_audience_and_permission": null,
+    "operator_support_and_recovery": null,
+    "funding_and_zero_price": null,
+    "permitted_upstream": null,
+    "equipment_power_and_interfaces": null,
+    "baseline_and_local_recovery": null,
+    "test_plan_limits_and_window": null
+  },
+  "limits": {
+    "join_seconds": null,
+    "load_participants": null,
+    "withdrawal_seconds": null,
+    "interruption_seconds": null,
+    "recovery_seconds": null,
+    "probe_seconds": null
+  },
+  "participant_price_minor": null,
+  "activation_authority": null,
+  "observations": {
+    "attachment": null,
+    "invalid_credential": null,
+    "ipv4_lease": null,
+    "dhcp_failure_and_recovery": null,
+    "fresh_dns": null,
+    "cache_expiry_and_recovery": null,
+    "independent_https": null,
+    "zero_participant_cost": null,
+    "representative_load": null,
+    "guest_household_management_isolation": null,
+    "future_admission_denial": null,
+    "existing_forwarding_denial": null,
+    "new_forwarding_denial": null,
+    "eviction_withheld_association": null,
+    "copied_roamed_changed_lease_restart": null,
+    "unaffected_participant": null,
+    "crossing_cleanup_and_stale_reuse": null,
+    "uplink_loss_local_management_withdrawal": null,
+    "restored_public_access": null,
+    "rollback_and_revocation_preserved": null
+  }
+}

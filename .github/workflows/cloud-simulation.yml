@@ -3,14 +3,14 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - step-6-rematerialization
+      - step-7-pilot-preparation
     paths:
       - .github/workflows/cloud-simulation.yml
 permissions:
   contents: read
   actions: read
 jobs:
-  step-6:
+  step-7:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -57,6 +57,17 @@ jobs:
           python3 -m commonwealth_sim.replay "$root" || comparison=$?
           if [[ "$status" == 1 || "$replay" == 1 || "$comparison" == 1 ]]; then exit 1; fi
           if [[ "$status" != 0 || "$replay" != 0 || "$comparison" != 0 ]]; then exit 2; fi
+      - name: Run Step 7 deterministic preparation and isolated gateway
+        run: |
+          root="$RUNNER_TEMP/commonwealth"
+          model=0
+          python3 -m commonwealth_sim.pilot model pilot/fixture-profile.json pilot/field-receipt.json pilot/cases.json "$root/step-7/model.json" || model=$?
+          gateway=0
+          python3 -m commonwealth_sim.pilot gateway pilot/fixture-profile.json pilot/field-receipt.json pilot/cases.json "$root/step-7/gateway.json" || gateway=$?
+          if [[ "$model" == 1 || "$gateway" == 1 ]]; then exit 1; fi
+          if [[ "$model" != 0 || "$gateway" != 0 ]]; then
+            echo "::warning::Step 7 has an unverified preparation layer"
+          fi
       - name: Expose bounded synthetic acceptance receipts
         if: always()
         run: |
@@ -80,20 +91,20 @@ jobs:
               str(path.relative_to(root))
               for suite in ("step-6", "step-6-replay")
               for path in sorted((root / suite).glob("*.json"))
-          ) + ("replay-comparison.json",)
+          ) + ("replay-comparison.json", "step-7/model.json", "step-7/gateway.json")
           for name in names:
               path = root / name
               if not path.is_file():
                   print(json.dumps({"receipt": name, "status": "missing"}))
                   continue
               data = json.loads(path.read_text())
-              record = {key: data[key] for key in data if key not in ("trace", "diagnostics")}
+              record = {key: data[key] for key in data if key not in ("trace", "diagnostics", "namespace_commands")}
               if data.get("incomplete") and data.get("diagnostics"):
                   for diagnostic in data["diagnostics"]:
                       if diagnostic.get("stderr"):
                           print(json.dumps({"receipt": name, "actor": diagnostic["role"],
                                             "diagnostic": diagnostic["stderr"][-2000:]}))
-              if name.startswith(("step-6/", "step-6-replay/")) and "checks" in record:
+              if name.startswith(("step-6/", "step-6-replay/", "step-7/")) and "checks" in record:
                   checks = record.pop("checks")
                   for index in range(0, len(checks), 8):
                       chunk = {"receipt": name, "check_offset": index, "checks": checks[index:index+8]}
@@ -112,7 +123,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: commonwealth-step-6
+          name: commonwealth-step-7
           path: ${{ runner.temp }}/commonwealth
           if-no-files-found: error
           retention-days: 14
