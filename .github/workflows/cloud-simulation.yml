@@ -6,6 +6,7 @@ on:
       - step-9-independent-setup
     paths:
       - .github/workflows/cloud-simulation.yml
+      - kit/package/STEP9.md
 permissions:
   contents: read
   actions: read
