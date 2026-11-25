@@ -190,11 +190,15 @@ def exercise(profile, config):
         for name, cmd in {"ip": ("ip", "-V"), "nft": ("nft", "--version"),
                           "ping": ("ping", "-V")}.items():
             versions[name] = f.run(*cmd, check=False).stdout.strip()
-        if shutil.which("dnsmasq"):
+        dnsmasq = os.environ.get("PILOT_DNSMASQ") or shutil.which("dnsmasq")
+        if dnsmasq:
+            tool = f.run(dnsmasq, "--version", namespace="g", check=False)
+            versions["dnsmasq"] = tool.stdout.splitlines()[0] if tool.returncode == 0 else "unavailable"
+        if dnsmasq and versions["dnsmasq"] != "unavailable":
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "dnsmasq.conf"
                 path.write_text(config)
-                syntax = f.run("dnsmasq", "--test", "-C", str(path), namespace="g", check=False)
+                syntax = f.run(dnsmasq, "--test", "-C", str(path), namespace="g", check=False)
                 config_status = "PASS" if syntax.returncode == 0 else "FAIL"
                 f.check("dhcp_resolver_config_syntax", 0, syntax.returncode)
         f.check("synthetic_wan", True, f.ping("a", "203.0.113.2"))

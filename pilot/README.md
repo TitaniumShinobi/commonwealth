@@ -65,6 +65,6 @@ python3 -m commonwealth_sim.pilot model pilot/fixture-profile.json pilot/field-r
 python3 -m commonwealth_sim.pilot gateway pilot/fixture-profile.json pilot/field-receipt.json pilot/cases.json "$root/step-7/gateway.json"
 ```
 
-Namespace commands use disposable isolated interfaces. Both gateway and synthetic WAN have no default route. The job retains each layer's verdict and original command evidence in the verified archive. A successful workflow with an UNVERIFIED layer remains incomplete for that layer. The procedure confers no activation authority.
+The workflow stages Ubuntu's dnsmasq-base syntax checker outside the fixture when it is missing. Package retrieval is CI tooling traffic. No package is installed as a runner service. Namespace commands use disposable isolated interfaces. Both gateway and synthetic WAN have no default route. The job retains each layer's verdict and original command evidence in the verified archive. A successful workflow with an UNVERIFIED layer remains incomplete for that layer. The procedure confers no activation authority.
 
 Sources · [Pilot rubric](https://github.com/TitaniumShinobi/commonwealth/blob/e54c79849a7c77dbc5fe0204a2cec735b9eca6b5/COMMONWEALTH.md#classical-internet-pilot) · [Pinned roadmap](https://github.com/TitaniumShinobi/commonwealth/blob/e54c79849a7c77dbc5fe0204a2cec735b9eca6b5/ROADMAP.md) · [Connectivity profile](https://github.com/TitaniumShinobi/commonwealth/blob/e54c79849a7c77dbc5fe0204a2cec735b9eca6b5/COMMONWEALTH.md#connectivity-uplinks-and-routing)
