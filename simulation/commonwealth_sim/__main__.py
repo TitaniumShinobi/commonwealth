@@ -37,11 +37,11 @@ def save(target, value):
 
 
 class Process:
-    def __init__(self, role, directory, path, run, case):
+    def __init__(self, role, directory, path, run, case, start=0):
         self.role = role
         self.child = subprocess.Popen(
             [sys.executable, "-m", "commonwealth_sim.actor", role, str(directory),
-             str(path), run, case], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+             str(path), run, case, str(start)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, bufsize=0)
         os.set_blocking(self.child.stdin.fileno(), False)
         self.pending = bytearray()
@@ -162,7 +162,7 @@ class Case:
                 heapq.heappush(pending, self.envelope(tick, emitted["recipient"], emitted["sender"],
                                                      emitted.get("purpose", "federation"), emitted["payload"]))
             yield result
-        for role in ROLES:
+        for role in self.children:
             if self.call(role, {"kind": "close_tick", "tick": tick}) != {"closed": tick}:
                 raise RuntimeError("tick close was not acknowledged")
 
@@ -222,6 +222,106 @@ class Case:
                                      "expected": expected, "observed": actual, "matches": matches})
             next_tick = tick + 1
 
+    def lifecycle(self, tick, command, root):
+        role = "a-application"
+        if command == "lose":
+            child = self.children.pop(role)
+            child.finish(False)
+            observation = child.reap(time.monotonic() + 2)
+            self.trace.append({"lifecycle": "old_host_reaped", "tick": tick, **observation})
+            if observation["exit"] != 0:
+                raise RuntimeError("original host did not stop cleanly")
+        elif command == "replace":
+            if role in self.children:
+                raise RuntimeError("cannot overlap old and replacement hosts")
+            child = Process(role, root / "a-host-2", self.path, self.run, self.case, tick)
+            self.children[role] = child
+            observed = self.call(role, None, seconds=5)
+            if observed != {"ready": role, "limits": [MEMORY, MEMORY]}:
+                raise RuntimeError("replacement did not acknowledge readiness")
+            self.trace.append({"lifecycle": "clean_host_started", "tick": tick, "host": "a-host-2"})
+
+    def check(self, tick, operation, expected, actual):
+        matches = actual is not None and all(k in actual and actual[k] == v for k, v in expected.items())
+        self.results.append({"criterion": operation, "tick": tick, "expected": expected,
+                             "observed": actual, "matches": matches})
+
+    def run_recovery(self, fixture, root):
+        for tick in range(fixture["end"] + 1):
+            step = fixture["ticks"].get(str(tick), {})
+            if "lifecycle" in step:
+                self.lifecycle(tick, step["lifecycle"], root)
+            pending = [self.envelope(tick, item["actor"], item["sender"], "recovery", item["payload"])
+                       for item in step.get("actions", [])]
+            heapq.heapify(pending)
+            start = len(self.trace)
+            list(self.advance(tick, pending))
+            seen = {}
+            for entry in self.trace[start:]:
+                request = entry["request"]
+                if request["kind"] == "deliver":
+                    name = request["envelope"]["payload"]["op"]
+                    observation = entry["reply"].get("observation", entry["reply"])
+                    seen[name] = observation
+                    seen[f'{entry["actor"]}/{name}'] = observation
+                    if name == "fence":
+                        seen[f'fence/{observation.get("boundary")}'] = observation
+            for name, expected in step.get("expect", {}).items():
+                self.check(tick, name, expected, seen.get(name))
+            operation = f"control-{tick}"
+            for name, decision in (("control_commit", "control_committed"),
+                                   ("control_read", "control_read")):
+                entry = self.envelope(tick, "b", "fixture-observer", "recovery",
+                                      {"op": name, "operation": operation})
+                entry[3]["envelope"]["phase"] = "post_close_probe"
+                message = entry[3]["envelope"]
+                entry[3]["tag"] = tag(self.topology["keys"]["fixture-observer"]["recovery"], message)
+                result = self.call("b", entry[3]).get("observation")
+                self.check(tick, name, {"decision": decision, "operation": operation, "count": tick + 1}, result)
+        tick = fixture["end"]
+        for role in ("a-authority", "a-application", "b"):
+            envelope = self.envelope(tick, role, "fixture-observer", "recovery", {"op": "audit_state"})[3]
+            envelope["envelope"]["phase"] = "post_close_probe"
+            envelope["tag"] = tag(self.topology["keys"]["fixture-observer"]["recovery"], envelope["envelope"])
+            self.call(role, envelope)
+        self.score_recovery(fixture)
+
+    def score_recovery(self, fixture):
+        observations = [e for e in self.trace if
+                        (e.get("request") or {}).get("kind") == "deliver"]
+        audited = [e for e in observations if e["request"]["envelope"]["payload"]["op"] == "audit_state"]
+        sources = {e["actor"] for e in audited}
+        matches = sources == {"a-authority", "a-application", "b"}
+        self.check(fixture["end"], "audit_coverage", {"complete": True}, {"complete": matches})
+        privileged = [e["reply"]["observation"]["events"] for e in audited]
+        founder = sum(item["sender"] == "founder" and item["decision"] != "role_denied"
+                      for events in privileged for item in events)
+        self.check(fixture["end"], "founder_privileged_interventions", {"count": 0},
+                   {"count": founder, "sources": sorted(sources), "window": [0, fixture["end"]],
+                    "lifecycle": [e for e in self.trace if "lifecycle" in e]})
+        if fixture.get("score_restore"):
+            baseline = next((x["observed"] for x in self.results if x["criterion"] == "peer_state"), None)
+            ending = next((x["observed"] for x in reversed(self.results)
+                           if x["criterion"] == "peer_state"), None)
+            retrieval = next((e["reply"]["observation"] for e in observations
+                              if e["request"]["envelope"]["payload"]["op"] == "read_result"
+                              and e["reply"]["observation"].get("disclosed")
+                              and e["reply"]["observation"].get("host") == "a-host-2"), None)
+            lost = next((e["tick"] for e in self.trace if e.get("lifecycle") == "old_host_reaped"), None)
+            verified = retrieval is not None and lost is not None
+            recovery_time = retrieval["tick"] - lost if verified else None
+            age = lost - retrieval["data_tick"] if verified else None
+            self.check(fixture["end"], "restore_limits", {"met": True},
+                       {"met": verified and recovery_time <= 5 and 0 <= age <= 2,
+                        "loss_tick": lost, "retrieval_tick": retrieval and retrieval["tick"],
+                        "data_tick": retrieval and retrieval["data_tick"], "recovery_time": recovery_time,
+                        "restored_data_age": age, "max_recovery_time": 5, "max_data_age": 2})
+            unchanged = bool(baseline and ending and
+                             all(baseline[k] == ending[k] for k in ("trust_digest", "policy_digest"))
+                             and not ending["configuration_changes"])
+            self.check(fixture["end"], "peer_configuration_unchanged", {"unchanged": True},
+                       {"unchanged": unchanged, "before": baseline, "after": ending})
+
     def stop(self, abort):
         for child in self.children.values():
             child.finish(abort)
@@ -237,6 +337,8 @@ def execute(topology, path, run, fixture, suite_deadline, action=None, suite='st
             case.start(Path(directory))
             if action is None:
                 case.smoke(Path(directory))
+            elif suite == "step-6":
+                case.run_recovery(action, Path(directory))
             elif suite in ("step-4", "step-5"):
                 case.run_scripted(action, "federation" if suite == "step-4" else "household")
             else:
@@ -260,7 +362,7 @@ def main():
     parser.add_argument("command", choices=("smoke", "run"))
     parser.add_argument("--topology", type=Path, required=True)
     parser.add_argument("--cases", type=Path)
-    parser.add_argument("--suite", choices=("step-3", "step-4", "step-5"))
+    parser.add_argument("--suite", choices=("step-3", "step-4", "step-5", "step-6"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     revision = os.getenv("CHECKOUT_SHA")
@@ -272,6 +374,7 @@ def main():
                 "runner_label": "ubuntu-24.04", "runner_os": os.getenv("RUNNER_OS"),
                 "runner_arch": os.getenv("RUNNER_ARCH"), "machine": platform.machine(),
                 "image_os": os.getenv("ImageOS", "unavailable"), "image_version": os.getenv("ImageVersion", "unavailable"),
+                "command": [sys.executable, "-m", "commonwealth_sim", *sys.argv[1:]],
                 "python": platform.python_version(), "implementation": platform.python_implementation(),
                 "limits": {"processes": 5, "address_space_per_process": MEMORY, "ack_seconds": 2,
                            "actor_lifecycle_seconds": 5, "case_seconds": 30, "suite_seconds": 90,
@@ -307,6 +410,8 @@ def main():
             for name, actions in cases[args.suite].items():
                 receipt = execute(topology, args.topology, run, name, deadline, actions, args.suite)
                 receipt["cases_sha256"] = manifest["cases_sha256"]
+                if args.suite == "step-6":
+                    receipt["resolved_fixture_sha256"] = hashlib.sha256(encode(actions)).hexdigest()
                 results[name] = receipt["verdict"]
                 save(directory / f"{name}.json", receipt)
             verdict = ("FAIL" if "FAIL" in results.values() else

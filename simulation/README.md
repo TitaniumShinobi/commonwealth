@@ -10,4 +10,21 @@ Verdicts: PASS exits 0, FAIL exits 1, and incomplete evidence without a scored f
 
 Step 4 runs after smoke and the Step 3 regression suite. Its synthetic operator actors exercise local enrollment and locator bootstrap, publication verification, service authorization, endpoint revision and exit. TLS failure and HTTP transport states are modeled, with no sockets or TLS handshakes. The unrelated control fixture uses a separate logical peer hosted by the access actor to stay within the process bound. Step 5 and Step 6 are unexecuted.
 
-Step 5 runs after smoke and the Step 3 and Step 4 regressions. It exercises synthetic enrollment and appraisal, scoped household grants, execution-domain denials, current authority, same-tick withdrawal and retry, queued effect denial, scoped cleanup, and fresh authorization. Expected/observed receipts include an independent control crossing and domain probes. The evaluator and network boundaries are process models, not platform or device-attestation tests. Step 6 is unexecuted.
+Step 5 runs after smoke and the Step 3 and Step 4 regressions. It exercises synthetic enrollment and appraisal, scoped household grants, execution-domain denials, current authority, same-tick withdrawal and retry, queued effect denial, scoped cleanup, and fresh authorization. Expected/observed receipts include an independent control crossing and domain probes. The evaluator and network boundaries are process models, not platform or device-attestation tests. Step 6 is a separate suite.
+
+## Step 6
+
+The branch workflow runs smoke and Steps 3–5 before two clean Step 6 runs. With the verified runner checkout and smoke receipt already available, the workflow invokes:
+
+```bash
+export PYTHONPATH=simulation
+root="$RUNNER_TEMP/commonwealth"
+for result in step-6 step-6-replay; do
+  python3 -m commonwealth_sim run --topology simulation/fixtures/topology.json --cases simulation/fixtures/cases.json --suite step-6 --out "$root/$result"
+done
+python3 -m commonwealth_sim.replay "$root"
+```
+
+The harness stops and reaps the original application before starting the replacement. The restore authority binds one operation to the steward, service, backup digest and clean target. Separate synthetic roles enforce ingress and writer fences, reconcile authorization, publication and credentials, and authorize replacement issuance and publication. The B actor independently validates binding and rejoin, and commits and reads back its own workload on every virtual tick. The normal run and replay retain complete original traces. The replay digest compares semantic trace and checks, including virtual ticks, role decisions and committed-state digests. Run-specific authenticated envelope metadata is outside that comparison.
+
+The evidence covers a single runner, public fixture credentials, modeled authority stores, and modeled fences. It does not establish separate production custody, platform isolation, real network fencing or live recovery.

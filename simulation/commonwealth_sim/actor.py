@@ -121,6 +121,8 @@ class Actor:
         self.closed_tick = -1
         from .federation import Federation
         from .household import Household
+        from .recovery import Recovery
+        self.recovery = Recovery(role, directory, topology)
         self.household = Household(role, topology)
         self.federation = Federation(role, directory, topology)
         self.access = Access(topology["access"]) if role == "access" else None
@@ -138,18 +140,24 @@ class Actor:
         if identity in self.accepted:
             return {"decision": "duplicate" if self.accepted[identity] == digest else "id_conflict"}
         tick = envelope["tick"]
-        if (tick <= self.closed_tick or not envelope["valid_from"] <= tick < envelope["expires"]
+        post_close = (purpose == "recovery" and sender == "fixture-observer"
+                      and envelope.get("phase") == "post_close_probe" and tick == self.closed_tick
+                      and (envelope["payload"]["op"] == "audit_state" or
+                           (self.role == "b" and envelope["payload"]["op"] in ("control_commit", "control_read"))))
+        if ((tick <= self.closed_tick and not post_close) or not envelope["valid_from"] <= tick < envelope["expires"]
                 or envelope["sequence"] <= self.sequence.get(sender, 0)):
             return {"decision": "stale_rejected"}
         permitted = (sender, purpose) == ("harness", "smoke") or (
             self.role == "access" and (sender, purpose) == ("access-operator", "access"))
-        if not permitted and purpose not in ("federation", "household"):
+        if not permitted and purpose not in ("federation", "household", "recovery"):
             return {"decision": "authority_rejected"}
         self.accepted[identity] = digest
         self.sequence[sender] = envelope["sequence"]
         if purpose == "smoke":
             return {"decision": "accepted", "role": self.role,
                     "state_directory": str(self.directory), "limits": list(resource.getrlimit(resource.RLIMIT_AS))}
+        if purpose == "recovery":
+            return {"decision": "accepted", **self.recovery.apply(sender, tick, envelope["payload"])}
         if purpose == "household":
             return {"decision": "accepted", **self.household.apply(sender, tick, envelope["payload"])}
         if purpose == "federation":
@@ -169,10 +177,11 @@ class Actor:
 
 
 def main():
-    role, directory, topology_path, run, case = sys.argv[1:]
+    role, directory, topology_path, run, case, start = sys.argv[1:]
     directory = Path(directory)
     directory.mkdir(exist_ok=False)
     actor = Actor(role, directory, decode(Path(topology_path).read_bytes()), run, case)
+    actor.closed_tick = int(start) - 1
     sys.stdout.buffer.write(encode({"ready": role, "limits": list(resource.getrlimit(resource.RLIMIT_AS))}) + b"\n")
     sys.stdout.buffer.flush()
     while line := sys.stdin.buffer.readline(LINE + 1):
