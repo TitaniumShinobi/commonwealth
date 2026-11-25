@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .namespace_pilot import exercise
@@ -108,10 +109,21 @@ def config_text(profile):
             "no-resolv\nno-hosts\nserver=203.0.113.2\n")
 
 
+def timestamp(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        instant = datetime.fromisoformat(value)
+        return instant if instant.utcoffset() is not None else None
+    except ValueError:
+        return None
+
+
 def assess(field):
     def evidence(record, scope):
         return (isinstance(record, dict) and record.get("scope") == scope
-                and all(record.get(k) for k in ("owner", "reference", "observed_at"))
+                and all(record.get(k) for k in ("owner", "reference"))
+                and timestamp(record.get("observed_at")) is not None
                 and record.get("site_ref") == field.get("site_ref")
                 and record.get("configuration_ref") == field.get("configuration_ref")
                 and bool(field.get("site_ref") and field.get("configuration_ref")))
@@ -123,13 +135,46 @@ def assess(field):
         missing.append("documented_zero_price")
     if field.get("target") != TARGET:
         missing.append("target")
-    authorization = evidence(field.get("activation_authority"), "direct")
-    pending, failures = [], []
+    run = field.get("field_run") or {}
+    approval = field.get("activation_authority") or {}
+    start = timestamp(run.get("starts_at"))
+    end = timestamp(run.get("ends_at"))
+    approved_at = timestamp(approval.get("observed_at"))
+    authorization = (evidence(approval, "direct") and start is not None and end is not None
+                     and approved_at <= start < end and bool(run.get("run_ref"))
+                     and all(approval.get(k) == run.get(k) for k in ("run_ref", "starts_at", "ends_at"))
+                     and run.get("authority_ref") == approval.get("reference"))
+    pending, failures, rejected = [], [], {}
     for key in FIELD:
         row = field["observations"].get(key)
-        if (not evidence(row, "field") or
-                not all(row.get(k) for k in ("run_ref", "vantage", "criterion_ref", "enforcement_boundary"))
-                or "observed_result" not in row):
+        if row is None:
+            pending.append(key)
+            continue
+        if not isinstance(row, dict):
+            pending.append(key)
+            rejected[key] = "invalid_observation"
+            continue
+        if not authorization:
+            pending.append(key)
+            rejected[key] = "run_or_window_not_authorized"
+            continue
+        observed = timestamp(row.get("observed_at"))
+        if (row.get("site_ref"), row.get("configuration_ref")) != (
+                field.get("site_ref"), field.get("configuration_ref")):
+            rejected[key] = "site_or_configuration_mismatch"
+        elif row.get("run_ref") != run["run_ref"]:
+            rejected[key] = "mixed_run"
+        elif row.get("authority_ref") != run["authority_ref"]:
+            rejected[key] = "activation_authority_mismatch"
+        elif observed is None:
+            rejected[key] = "invalid_observation_timestamp"
+        elif not start <= observed < end:
+            rejected[key] = "outside_activation_window"
+        if key in rejected:
+            pending.append(key)
+        elif (not evidence(row, "field")
+              or not all(row.get(k) for k in ("vantage", "criterion_ref", "enforcement_boundary"))
+              or "observed_result" not in row):
             pending.append(key)
         elif row.get("verdict") == "FAIL":
             failures.append(key)
@@ -140,6 +185,7 @@ def assess(field):
     return {"target": TARGET, "target_forecast": "UNVERIFIED" if missing else "ELIGIBLE_FOR_FIELD_REVIEW",
             "ready_to_request_activation": ready, "activation": "HELD" if not authorization else "AUTHORITY_RECORDED",
             "field_acceptance": verdict, "missing_readiness": missing,
+            "field_run_ref": run.get("run_ref"), "receipt_binding_rejections": rejected,
             "missing_field_observations": pending, "observed_field_failures": failures}
 
 

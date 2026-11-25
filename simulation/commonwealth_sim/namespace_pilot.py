@@ -9,16 +9,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-TCP_SERVER = """import socket
+TCP_SERVER = """import socket,threading
 s=socket.socket()
 s.bind(('203.0.113.2', 8090))
 s.listen()
 print('ready', flush=True)
-while True:
-    c,_=s.accept()
+def echo(c):
     with c:
         while item:=c.recv(1):
             c.sendall(item)
+while True:
+    c,_=s.accept()
+    threading.Thread(target=echo,args=(c,),daemon=True).start()
 """
 TCP_CLIENT = """import socket,sys
 s=socket.create_connection(('203.0.113.2',8090),2)
@@ -40,6 +42,8 @@ class Fixture:
         self.children = []
         self.commands = []
         self.checks = []
+        self.policy_events = []
+        self.state = tempfile.TemporaryDirectory(prefix="cw-pilot-policy-")
 
     def run(self, *cmd, namespace=None, check=True, data=None):
         prefix = ["sudo", "-n"]
@@ -100,6 +104,21 @@ class Fixture:
             raise TimeoutError("fixture TCP process did not acknowledge")
         return child.stdout.readline().strip()
 
+    def tracked(self, program, source):
+        result = self.run(program, "-L", "-p", "tcp", "-s", source,
+                          "-d", "203.0.113.2", "--dport", "8090", namespace="g")
+        return result.stdout.strip().splitlines()
+
+    def delete_tracking(self, program, source):
+        return self.run(program, "-D", "-p", "tcp", "-s", source,
+                        "-d", "203.0.113.2", "--dport", "8090", namespace="g", check=False)
+
+    def host_service(self):
+        code = ("import socket; s=socket.create_connection(('198.51.100.18', 8091), 2); "
+                "s.settimeout(2); s.sendall(b'h'); print(s.recv(1).decode())")
+        result = self.run(sys.executable, "-c", code, namespace="g", check=False)
+        return result.returncode == 0 and result.stdout.strip() == "h"
+
     def cleanup(self):
         errors = []
         for child in reversed(self.children):
@@ -116,6 +135,7 @@ class Fixture:
             result = self.run("ip", "netns", "del", self.prefix + ns, check=False)
             if result.returncode:
                 errors.append(ns)
+        self.state.cleanup()
         return errors
 
 
@@ -147,11 +167,16 @@ def exercise(profile, config):
     unavailable = [name for name, present in versions.items() if not present]
     if unavailable:
         return {"verdict": "UNVERIFIED", "missing_tools": unavailable, "tools": versions}
+    conntrack = os.environ.get("PILOT_CONNTRACK") or shutil.which("conntrack")
+    if not conntrack:
+        return {"verdict": "UNVERIFIED", "missing_tools": ["conntrack"], "tools": versions}
     f = Fixture(profile)
     error = None
     digests = {}
     setup = False
     config_status = "UNVERIFIED"
+    custody = {}
+    tracked = {}
     try:
         for role in ("g", "l", "a", "b", "w", "h", "m", "s"):
             f.create(role)
@@ -183,9 +208,29 @@ def exercise(profile, config):
             f.check(f"{role}_has_no_default_route", "", routes.strip())
             if routes.strip():
                 raise RuntimeError("unexpected route in isolated fixture")
-        initial = firewall(guest, wan, ())
-        digests["initial"] = f.program("g", initial)
+        initial = firewall(guest, wan, (), close=True)
+        digests["initial_closed"] = f.program("g", initial)
         digests["bridge"] = f.program("l", bridge())
+        # Capture the installed baseline and bind its restore to this runtime target.
+        baseline = f.run("nft", "-s", "list", "ruleset", namespace="g").stdout
+        replace = "delete table inet cw\ndelete table ip cwnat\n"
+        captured = hashlib.sha256(baseline.encode()).hexdigest()
+        candidate = firewall(guest, wan, ())
+        custody = {"target": f.prefix + "g", "baseline_sha256": captured,
+                   "candidate_sha256": hashlib.sha256(candidate.encode()).hexdigest(),
+                   "baseline_ruleset": baseline}
+        tools_version = f.run(conntrack, "-V", check=False)
+        versions["conntrack"] = (tools_version.stdout or tools_version.stderr).strip()
+        if tools_version.returncode:
+            raise RuntimeError("conntrack binary unavailable")
+        host = f.launch("m", TCP_SERVER.replace("203.0.113.2", "198.51.100.18").replace("8090", "8091"))
+        f.check("host_service_started", "ready", f.line(host))
+        f.check("host_service_on_baseline", True, f.host_service())
+        f.check("baseline_guest_closed", False, f.ping("b", "203.0.113.2"))
+        f.check("target_bound_baseline_pre_apply", captured, hashlib.sha256(
+            f.run("nft", "-s", "list", "ruleset", namespace="g").stdout.encode()).hexdigest())
+        digests["candidate_applied"] = f.program("g", replace + candidate)
+        f.check("host_service_after_candidate", True, f.host_service())
         setup = True
         for name, cmd in {"ip": ("ip", "-V"), "nft": ("nft", "--version"),
                           "ping": ("ping", "-V")}.items():
@@ -211,25 +256,75 @@ def exercise(profile, config):
         f.check("tcp_server", "ready", f.line(server))
         client = f.launch("a", TCP_CLIENT)
         f.check("existing_tcp_before_withdrawal", "echo", f.line(client, send=True))
-        denied = firewall(guest, wan, ("192.0.2.10",))
-        replace = "delete table inet cw\ndelete table ip cwnat\n"
+        tracked["active_before_withdrawal"] = f.tracked(conntrack, "192.0.2.10")
+        f.check("existing_conntrack_established", True, any("ESTABLISHED" in x for x in tracked["active_before_withdrawal"]))
+        ledger = Path(f.state.name) / "revocations.txt"
+        with ledger.open("w") as stream:
+            stream.write("192.0.2.10\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        f.policy_events.append("durable_revocation_committed")
+        denied = firewall(guest, wan, tuple(ledger.read_text().splitlines()))
         digests["withdrawal"] = f.program("g", replace + denied)
         f.check("existing_tcp_stops_without_eviction", "blocked", f.line(client, send=True))
         f.check("new_flow_stops_without_eviction", False, f.ping("a", "203.0.113.2"))
         f.check("routed_deny_counters", True, bool(re.search(r"ip saddr 192\.0\.2\.10 counter packets [1-9]",
                     f.run("nft", "list", "chain", "inet", "cw", "forward", namespace="g").stdout)))
+        f.policy_events.append("routed_deny_verified_before_conntrack_delete")
+        tracked["withdrawal_delete_returncode"] = f.delete_tracking(conntrack, "192.0.2.10").returncode
+        f.check("withdrawal_conntrack_delete", 0, tracked["withdrawal_delete_returncode"])
+        tracked["after_withdrawal"] = f.tracked(conntrack, "192.0.2.10")
+        f.check("withdrawal_conntrack_empty", [], tracked["after_withdrawal"])
         f.program("l", "delete table bridge cwlan\n" + bridge(True))
         f.check("withdrawn_bridge_path", False, f.ping("a", "192.0.2.1"))
         f.check("bridge_deny_counter", True, bool(re.search(r'iifname "p1" counter packets [1-9]',
                 f.run("nft", "list", "chain", "bridge", "cwlan", "forward", namespace="l").stdout)))
+        # Model a policy-process restart: close guest forwarding, read durable
+        # revocation, reinstall denial, and verify it before enabling forwarding.
+        f.program("g", replace + firewall(guest, wan, (), close=True))
+        f.policy_events.append("restart_guest_forwarding_closed")
+        f.check("restart_before_reload_control_closed", False, f.ping("b", "203.0.113.2"))
+        durable = tuple(ledger.read_text().splitlines())
+        f.program("g", replace + firewall(guest, wan, durable, close=True))
+        closed_policy = f.run("nft", "-s", "list", "chain", "inet", "cw", "forward", namespace="g").stdout
+        f.check("denial_read_back_before_forwarding_resume", True,
+                all(f"ip {direction}addr {durable[0]} counter drop" in closed_policy
+                    for direction in ("s", "d")) and "oifname" not in closed_policy)
+        f.policy_events.append("revocation_read_back_while_closed")
+        f.program("g", replace + firewall(guest, wan, durable))
+        f.policy_events.append("forwarding_resumed_with_revocation")
         f.check("unaffected_control", True, f.ping("b", "203.0.113.2"))
+        f.check("revoked_denied_after_restart", False, f.ping("a", "203.0.113.2"))
+        f.check("revoked_conntrack_absent_after_restart", [], f.tracked(conntrack, "192.0.2.10"))
+        f.check("host_service_after_restart", True, f.host_service())
         f.run("ip", "link", "set", wan, "down", namespace="g")
         f.check("wan_loss", False, f.ping("b", "203.0.113.2"))
         f.check("local_management_during_loss", True, f.ping("m", "198.51.100.17"))
         f.run("ip", "link", "set", wan, "up", namespace="g")
         f.check("unaffected_recovery", True, f.ping("b", "203.0.113.2"))
         f.check("withdrawal_survives_recovery", False, f.ping("a", "203.0.113.2"))
-        digests["rollback_closed"] = f.program("g", replace + firewall(guest, wan, ("192.0.2.10",), close=True))
+        control = f.launch("b", TCP_CLIENT)
+        f.check("unaffected_tcp_before_rollback", "echo", f.line(control, send=True))
+        tracked["control_before_rollback"] = f.tracked(conntrack, "192.0.2.11")
+        f.check("control_conntrack_exists_before_rollback", True,
+                any("ESTABLISHED" in x for x in tracked["control_before_rollback"]))
+        f.check("baseline_digest_before_restore", captured, hashlib.sha256(baseline.encode()).hexdigest())
+        f.check("baseline_target_before_restore", custody["target"], f.prefix + "g")
+        digests["rollback_captured_baseline"] = f.program("g", replace + baseline)
+        restored = f.run("nft", "-s", "list", "ruleset", namespace="g").stdout
+        custody["restored_pre_overlay_sha256"] = hashlib.sha256(restored.encode()).hexdigest()
+        f.check("captured_baseline_exact_readback", captured, custody["restored_pre_overlay_sha256"])
+        f.check("rollback_guest_closed_before_reconciliation", False, f.ping("b", "203.0.113.2"))
+        for direction in ("s", "d"):
+            f.run("nft", "insert", "rule", "inet", "cw", "forward", "ip", f"{direction}addr",
+                  durable[0], "counter", "drop", namespace="g")
+        tracked["rollback_delete_returncode"] = f.delete_tracking(conntrack, "192.0.2.11").returncode
+        f.check("rollback_conntrack_delete", 0, tracked["rollback_delete_returncode"])
+        tracked["after_rollback_control"] = f.tracked(conntrack, "192.0.2.11")
+        tracked["after_rollback_revoked"] = f.tracked(conntrack, "192.0.2.10")
+        f.check("rollback_all_exercised_guest_conntrack_empty", [[], []],
+                [tracked["after_rollback_control"], tracked["after_rollback_revoked"]])
+        f.check("host_service_after_baseline_restore", True, f.host_service())
         f.check("rollback_guest_closed", False, f.ping("b", "203.0.113.2"))
         f.check("rollback_management_retained", True, f.ping("m", "198.51.100.17"))
         f.check("rollback_revocation_retained", True,
@@ -244,5 +339,6 @@ def exercise(profile, config):
     return {"verdict": verdict, "packet_fixture": packet, "dhcp_dns_syntax": config_status,
             "checks": f.checks, "namespace_commands": f.commands, "tools": versions,
             "kernel": platform.release(), "config_sha256": digests, "incomplete": error,
-            "cleanup_errors": cleanup, "wan": "disconnected veth only",
+            "capture_and_rollback": custody, "policy_events": f.policy_events,
+            "conntrack_readbacks": tracked, "cleanup_errors": cleanup, "wan": "disconnected veth only",
             "limit": "AP identity and radio are modeled; DHCP/DNS configuration check is syntax only"}

@@ -42,5 +42,11 @@
     "uplink_loss_local_management_withdrawal": null,
     "restored_public_access": null,
     "rollback_and_revocation_preserved": null
+  },
+  "field_run": {
+    "run_ref": null,
+    "starts_at": null,
+    "ends_at": null,
+    "authority_ref": null
   }
 }

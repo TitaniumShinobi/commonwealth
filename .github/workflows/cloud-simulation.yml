@@ -57,9 +57,9 @@ jobs:
           python3 -m commonwealth_sim.replay "$root" || comparison=$?
           if [[ "$status" == 1 || "$replay" == 1 || "$comparison" == 1 ]]; then exit 1; fi
           if [[ "$status" != 0 || "$replay" != 0 || "$comparison" != 0 ]]; then exit 2; fi
-      - name: Stage Ubuntu DHCP and DNS syntax checker
+      - name: Stage Ubuntu DHCP, DNS and conntrack tools
         run: |
-          if command -v dnsmasq >/dev/null; then exit 0; fi
+          if command -v dnsmasq >/dev/null && command -v conntrack >/dev/null; then exit 0; fi
           mkdir -p "$RUNNER_TEMP/commonwealth-tools"
           cd "$RUNNER_TEMP/commonwealth-tools"
           if timeout 35s apt-get download dnsmasq-base; then
@@ -73,7 +73,20 @@ jobs:
           else
             echo "::warning::Ubuntu dnsmasq syntax checker could not be staged"
           fi
-      - name: Run Step 7 deterministic preparation and isolated Linux gateway evidence
+          if ! command -v conntrack >/dev/null; then
+            if timeout 35s apt-get download conntrack; then
+              set -- conntrack_*.deb
+              if [[ "$#" == 1 && -f "$1" ]]; then
+                dpkg-deb -f "$1" Package Version Architecture
+                sha256sum "$1"
+                dpkg-deb -x "$1" extracted
+                echo "PILOT_CONNTRACK=$PWD/extracted/usr/sbin/conntrack" >> "$GITHUB_ENV"
+              fi
+            else
+              echo "::warning::Ubuntu conntrack could not be staged"
+            fi
+          fi
+      - name: Run Step 7 deterministic preparation and isolated Linux withdrawal and rollback
         run: |
           root="$RUNNER_TEMP/commonwealth"
           model=0
