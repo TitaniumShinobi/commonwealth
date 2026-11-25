@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - step-7-pilot-preparation
+      - step-8-commonwealth-kit
     paths:
       - .github/workflows/cloud-simulation.yml
 permissions:
@@ -11,6 +11,11 @@ permissions:
   actions: read
 jobs:
   step-7:
+    outputs:
+      bootstrap_id: ${{ steps.kit_boot.outputs.artifact-id }}
+      bootstrap_sha: ${{ steps.kit_boot.outputs.artifact-digest }}
+      release_id: ${{ steps.kit_release.outputs.artifact-id }}
+      release_sha: ${{ steps.kit_release.outputs.artifact-digest }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -200,3 +205,116 @@ jobs:
               if "custody" in json.loads(line):
                   print(line)
           PY
+      - name: Build and sign the fixed test Kit
+        run: python3 kit/build.py "$RUNNER_TEMP/commonwealth-kit"
+      - name: Publish separate trusted fixture inputs
+        id: kit_boot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kit-step8-bootstrap
+          path: ${{ runner.temp }}/commonwealth-kit/bootstrap
+          retention-days: 14
+          if-no-files-found: error
+      - name: Publish candidate and negative releases
+        id: kit_release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kit-step8-release
+          path: ${{ runner.temp }}/commonwealth-kit/release
+          retention-days: 14
+          if-no-files-found: error
+
+  step-8-consumer:
+    needs: step-7
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Provision trusted inputs first, then obtain the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOT_ID: ${{ needs.step-7.outputs.bootstrap_id }}
+          BOOT_SHA: ${{ needs.step-7.outputs.bootstrap_sha }}
+          RELEASE_ID: ${{ needs.step-7.outputs.release_id }}
+          RELEASE_SHA: ${{ needs.step-7.outputs.release_sha }}
+        run: |
+          root="$RUNNER_TEMP/kit-consumer"
+          mkdir -p "$root"
+          download() {
+            id="$1" digest="$2" role="$3"
+            for attempt in 1 2 3; do
+              if curl --fail --silent --show-error --location --max-time 15 --max-filesize 8388608 \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" \
+                -o "$root/$role.zip"; then break; fi
+              if [[ "$attempt" == 3 ]]; then return 1; fi
+              sleep 2
+            done
+            echo "${digest#sha256:}  $root/$role.zip" | sha256sum --check
+            python3 - "$root/$role.zip" "$root/$role" <<'PY'
+          import sys, zipfile
+          from pathlib import Path, PurePosixPath
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              names = archive.namelist()
+              if (len(names) != len(set(names)) or len(names) > 32
+                  or any(PurePosixPath(n).is_absolute() or ".." in PurePosixPath(n).parts for n in names)
+                  or sum(member.file_size for member in archive.infolist()) > 8 * 1024 ** 2):
+                  raise SystemExit("invalid fixture artifact")
+              archive.extractall(sys.argv[2])
+          PY
+            echo "$role artifact $id SHA-256 $digest verified"
+          }
+          download "$BOOT_ID" "$BOOT_SHA" bootstrap
+          download "$RELEASE_ID" "$RELEASE_SHA" release
+          python3 - "$root/staged.json" <<'PY'
+          import json, os, sys
+          with open(sys.argv[1], "w") as out:
+              json.dump({role: {"id": os.environ[role + "_ID"], "sha256": os.environ[role + "_SHA"]}
+                         for role in ("BOOT", "RELEASE")}, out)
+          PY
+      - name: Exercise installed Kit in loopback-only namespace
+        run: |
+          root="$RUNNER_TEMP/kit-consumer"
+          mkdir "$root/empty" "$root/evidence"
+          cd "$root/empty"
+          test -z "$(ls -A)"
+          python3 --version
+          openssl version
+          sudo -n ip netns add cw-kit
+          trap 'sudo -n ip netns del cw-kit' EXIT
+          sudo -n ip -n cw-kit link set lo up
+          sudo -n ip netns exec cw-kit runuser -u "$USER" -- \
+            env -i PATH=/usr/bin:/bin HOME="$root/empty" PYTHONDONTWRITEBYTECODE=1 \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" \
+            timeout 120s python3 "$root/bootstrap/consume.py" \
+              --bootstrap "$root/bootstrap" --release "$root/release" \
+              --revision "$GITHUB_SHA" --out "$root/evidence/step-8.json"
+      - name: Print bounded Step 8 receipts
+        if: always()
+        run: |
+          root="$RUNNER_TEMP/kit-consumer"
+          python3 - "$root" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          p = root / "evidence" / "step-8.json"
+          if not p.is_file():
+              print(json.dumps({"step8": "UNVERIFIED", "reason": "consumer receipt absent"}))
+              raise SystemExit(0)
+          raw = p.read_bytes()
+          data = json.loads(raw)
+          for i in range(0, len(data["checks"]), 5):
+              print(json.dumps({"check_offset": i, "checks": data["checks"][i:i+5]}, separators=(",", ":")))
+          print(json.dumps({k: data[k] for k in ("revision", "verdict", "incomplete", "installation", "trust")},
+                           separators=(",", ":")))
+          proof = {"receipt_sha256": hashlib.sha256(raw).hexdigest(), "staged": json.loads((root / "staged.json").read_text())}
+          print(json.dumps(proof, separators=(",", ":")))
+          (p.parent / "custody.json").write_text(json.dumps(proof))
+          PY
+      - name: Preserve Step 8 consumer evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kit-step8-consumer
+          path: ${{ runner.temp }}/kit-consumer/evidence
+          retention-days: 14
+          if-no-files-found: error
