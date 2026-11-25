@@ -78,7 +78,7 @@ def start(args, ready):
         if ready.is_file():
             try:
                 return proc, load(ready)
-            except ValueError:
+            except (ValueError, PermissionError):
                 pass
         if proc.poll() is not None:
             break
@@ -170,9 +170,52 @@ def network_lifecycle(binary, root, client, reference, control):
     score("activate", "applied", commit(owner, "network-activate", "service-activate", old_app,
                                         {"identity": old_id})["decision"])
     listeners = []
+    isolated = tempfile.TemporaryDirectory(prefix="cw-old-host-")
+    public = Path(isolated.name)
+    legacy = public / "kit"
+    broker_process = None
     try:
-        old_ready = root / "old-network-ready"
-        old_process, old_seen = start([binary, "node", "start", "--config", old, "--ready-out", old_ready], old_ready)
+        public.chmod(0o755)
+        shutil.copytree(binary.parent.parent, legacy)
+        for path in (legacy, *legacy.rglob("*")):
+            if path.is_dir():
+                path.chmod(0o755)
+        uid = int(run("id", "-u", "nobody").stdout)
+        score("authority_and_old_host_uid_distinct", True, uid != os.getuid())
+        for path in (owner / "authority.sqlite", old_app, Path(old_config["publication_key"])):
+            scores = [run("sudo", "-n", "runuser", "-u", "nobody", "--", "test", flag, path).returncode
+                      for flag in ("-r", "-w")]
+            score("direct_access_denied_" + path.name, [1, 1], scores)
+        socket_path = public / "authority.sock"
+        broker_args = [sys.executable, binary.parent.parent / "lib/network9.py", old, socket_path, str(uid)]
+        COMMANDS.append(list(map(str, broker_args)))
+        broker_process = subprocess.Popen(broker_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(120):
+            if socket_path.exists() and socket_path.stat().st_mode & 0o002:
+                break
+            if broker_process.poll() is not None:
+                raise RuntimeError("external authority broker failed to start")
+            time.sleep(0.04)
+        exposed = dict(old_config, authority_socket=str(socket_path))
+        for key in ("ca", "certificate", "tls_key", "client_certificate", "client_key",
+                    "operator_public", "publication_public"):
+            dest = public / (key + ".pem")
+            if key in ("tls_key", "client_key"):
+                subprocess.run(["sudo", "-n", "install", "-m", "600", "-o", "nobody", old_config[key], dest], check=True)
+            else:
+                shutil.copyfile(old_config[key], dest)
+            exposed[key] = str(dest)
+        for key in ("operator_key", "publication_key", "authority", "application", "state"):
+            exposed.pop(key, None)
+        untrusted = public / "host"
+        subprocess.run(["sudo", "-n", "install", "-d", "-m", "755", "-o", "nobody", untrusted], check=True)
+        exposed["audit"] = str(untrusted / "audit")
+        public_config = public / "node.json"
+        write(public_config, exposed)
+        old_ready = untrusted / "ready"
+        old_process, old_seen = start(["sudo", "-n", "runuser", "-u", "nobody", "--",
+                                      legacy / "bin/commonwealth", "node", "start", "--config",
+                                      public_config, "--ready-out", old_ready], old_ready)
         listeners.append(old_process)
         client_ready = root / "client-network-ready"
         client_process, client_seen = start([binary, "node", "start", "--config", client,
@@ -231,12 +274,20 @@ def network_lifecycle(binary, root, client, reference, control):
         score("old_listener_alive", None, old_process.poll())
         score("control_peer_continues", "commonwealth-reference-v1",
               exchange(binary, client, control, "life.reference", "fixture.read", "network-control").get("result"))
-        return {"old": old_id, "new": new_id,
-                "old_audit": Path(old_config["audit"]).read_text().splitlines(),
+        stop(broker_process)
+        unavailable = wire(client, old_seen["endpoint"], old_id["certificate"], "broker-stopped", "fixture.read")
+        score("external_authority_unavailable_fail_closed", ["authority_unavailable", None, False],
+              [unavailable["reason"], unavailable.get("result"), unavailable["mutated"]])
+        return {"old": old_id, "new": new_id, "authority_uid": os.getuid(), "old_host_uid": uid,
+                "old_audit": Path(exposed["audit"]).read_text().splitlines(),
                 "new_audit": Path(load(new)["audit"]).read_text().splitlines()}
     finally:
         for proc in reversed(listeners):
             stop(proc)
+        if broker_process:
+            stop(broker_process)
+        subprocess.run(["sudo", "-n", "chown", "-R", str(os.getuid()), str(public)], check=True)
+        isolated.cleanup()
 
 
 def lifecycle(binary, root, targets, boot, chrome, codex):

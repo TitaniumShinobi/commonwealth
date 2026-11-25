@@ -75,3 +75,47 @@ def dispatch(config, serving, peer, request, disclose):
                 atomic_save(path, {"record": request["value"]})
                 reply.update(decision="allowed", reason="current_peer", mutated=True)
         disclose(reply)
+
+def relay(socket_path, peer, request, endpoint):
+    import socket
+    from runtime import receive, send
+    with socket.socket(socket.AF_UNIX) as channel:
+        channel.settimeout(2)
+        channel.connect(socket_path)
+        with channel.makefile("rwb") as stream:
+            send(stream, {"peer": peer, "request": request, "endpoint": endpoint})
+            return receive(stream)
+
+
+def broker(config_path, socket_path, old_uid):
+    import os
+    import socket
+    import socketserver
+    import struct
+    from runtime import cert_digest, discovery_record, read_config, receive, send
+    config = read_config(config_path)
+    serving = cert_digest(config["certificate"])
+
+    class Authority(socketserver.StreamRequestHandler):
+        def handle(self):
+            credentials = self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+            _, uid, _ = struct.unpack("3i", credentials)
+            if uid != old_uid:
+                send(self.wfile, {"decision": "denied", "reason": "authority_caller_denied"})
+                return
+            self.request.settimeout(2)
+            message = receive(self.rfile)
+            def respond(result):
+                if result is None:
+                    result = discovery_record(config, message["endpoint"], serving)
+                send(self.wfile, result)
+            dispatch(config, serving, message["peer"], message["request"], respond)
+
+    with socketserver.UnixStreamServer(socket_path, Authority) as server:
+        os.chmod(socket_path, 0o666)
+        server.serve_forever(poll_interval=0.2)
+
+
+if __name__ == "__main__":
+    import sys
+    broker(sys.argv[1], sys.argv[2], int(sys.argv[3]))

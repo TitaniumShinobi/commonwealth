@@ -140,6 +140,20 @@ def peer_state(config):
     return load(config["state"])
 
 
+def discovery_record(config, endpoint, serving):
+    publication = fingerprint(config["publication_public"])
+    operator = fingerprint(config["operator_public"])
+    delegation = {"operator_sha256": operator, "publication_sha256": publication, "service": config["service"]}
+    mismatch = Path(config["audit"]).with_name("wrong-binding")
+    bound_cert = mismatch.read_text() if mismatch.exists() else serving
+    binding = {"operator": config["operator"], "service": config["service"], "protocol": 1,
+               "endpoint": endpoint, "serving_sha256": bound_cert,
+               "revision": config.get("generation", 1), "expiry": int(time.time()) + 60}
+    return {"decision": "discovered", "delegation": delegation,
+            "delegation_signature": sign(config["operator_key"], delegation),
+            "binding": binding, "binding_signature": sign(config["publication_key"], binding)}
+
+
 def listener(config_path, ready_path):
     config = read_config(config_path)
     if config["host"] != "127.0.0.1":
@@ -153,16 +167,7 @@ def listener(config_path, ready_path):
 
     class Handler(socketserver.StreamRequestHandler):
         def discovery(self):
-            delegation = {"operator_sha256": operator, "publication_sha256": publication, "service": service}
-            mismatch = Path(config["audit"]).with_name("wrong-binding")
-            bound_cert = mismatch.read_text() if mismatch.exists() else serving
-            binding = {"operator": config["operator"], "service": service, "protocol": 1,
-                       "endpoint": list(self.server.server_address), "serving_sha256": bound_cert,
-                       "revision": config.get("generation", 1), "expiry": int(time.time()) + 60}
-            result = {"decision": "discovered", "delegation": delegation,
-                      "delegation_signature": sign(config["operator_key"], delegation),
-                      "binding": binding, "binding_signature": sign(config["publication_key"], binding)}
-            return result
+            return discovery_record(config, list(self.server.server_address), serving)
 
         def handle(self):
             request = receive(self.rfile)
@@ -178,7 +183,16 @@ def listener(config_path, ready_path):
                             log.write(canonical({**response, "action": request.get("action"),
                                                  "generation": config["generation"], "client_sha256": peer}))
                     send(self.wfile, response)
-                dispatch(config, serving, peer, request, deliver)
+                if "authority_socket" in config:
+                    from network9 import relay
+                    try:
+                        reply = relay(config["authority_socket"], peer, request, list(self.server.server_address))
+                    except (OSError, ValueError):
+                        reply = {"decision": "denied", "reason": "authority_unavailable",
+                                 "request_id": request.get("request_id"), "mutated": False}
+                    deliver(reply)
+                else:
+                    dispatch(config, serving, peer, request, deliver)
                 return
             if operation == "discover":
                 result = self.discovery()
@@ -220,6 +234,8 @@ def listener(config_path, ready_path):
                           "workload_sha256": workload, "recovery_authority": config["recovery_authority"],
                           "service": service, "configuration_sha256": sha(Path(config_path).read_bytes()),
                           "origin": origin()})
+        if "authority_socket" in config:
+            Path(ready_path).chmod(0o644)
         server.serve_forever(poll_interval=0.2)
 
 
