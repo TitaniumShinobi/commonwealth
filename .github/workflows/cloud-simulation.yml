@@ -529,7 +529,7 @@ jobs:
             sudo -n rm -rf -- "$CW_HOST_PUBLIC"
           fi
 
-      - name: Enforce exact Step 9 acceptance receipt verdict
+      - name: Enforce exact Step 9 network and operator receipt verdict
         if: always()
         run: |
           python3 - "${RUNNER_TEMP}/kit-consumer/step9/step-9.json" <<'PY'

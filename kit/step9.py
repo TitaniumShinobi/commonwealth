@@ -230,6 +230,36 @@ def network_lifecycle(binary, root, client, reference, control):
             return exchange(binary, client, old_config["operator"], "life.reference", "fixture.read", label)
         score("baseline_read", ["recoverable-version", 1],
               [read("baseline-network").get("result"), read("baseline-revision").get("binding_revision")])
+        relay_code = ("import json,sys;sys.path.insert(0,sys.argv[1]);from network9 import relay;"
+                      "m=json.load(sys.stdin);print(json.dumps(relay(sys.argv[2],m['request'],m['endpoint'],m.get('proof'))))")
+        message = {"operation": "request", "protocol": 1, "service": "life.reference",
+                   "action": "fixture.read", "request_id": "isolated-broker-proof"}
+        def relay_probe(proof=None, operation=None):
+            submitted = {"request": message if operation is None else operation,
+                         "endpoint": old_seen["endpoint"], "proof": proof}
+            proc = run("sudo", "-n", "runuser", "-u", "nobody", "--", sys.executable, "-c", relay_code,
+                       legacy / "lib", socket_path, input=canonical(submitted))
+            return json.loads(proc.stdout)
+        def signed_challenge(key):
+            challenge = relay_probe()["challenge"]
+            code = ("import json,sys;sys.path.insert(0,sys.argv[1]);from runtime import sign;"
+                    "print(sign(sys.argv[2],json.load(sys.stdin)))")
+            signed = run(sys.executable, "-c", code, binary.parent.parent / "lib", key,
+                         input=canonical(challenge)).stdout.decode().strip()
+            return {"nonce": challenge["nonce"], "signature": signed,
+                    "certificate": Path(load(client)["client_certificate"]).read_text()}
+        forged = signed_challenge(Path(old_config["client_key"]))
+        valid = signed_challenge(Path(load(client)["client_key"]))
+        altered = signed_challenge(Path(load(client)["client_key"]))
+        def rejection(result):
+            return [result["reason"], result.get("result"), result["mutated"]]
+        score("untrusted_host_cannot_forge_peer", ["peer_proof_invalid", None, False], rejection(relay_probe(forged)))
+        score("authority_verifies_enrolled_signature", "recoverable-version", relay_probe(valid).get("result"))
+        score("authority_consumes_challenge", ["challenge_unknown_expired_or_used", None, False],
+              rejection(relay_probe(valid)))
+        score("authority_rejects_changed_action", ["challenge_operation_changed", None, False],
+              rejection(relay_probe(altered, {**message, "action": "fixture.write", "value": "changed"})))
+        score("broker_challenges_did_not_modify_data", {"record": "recoverable-version"}, load(old_app))
         score("backup", "applied", commit(owner, "network-backup", "service-backup", old_app,
                                           {"identity": old_id})["decision"])
         score("bilateral_exit", ["applied", "applied"], [
@@ -598,8 +628,9 @@ def main():
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         error = str(exc)
     matched = not any(not row["matches"] for row in CHECKS)
-    unverified = ["guided parity for installation, exchange and lifecycle",
-                  "network peer exit and fenced restore with fresh serving identity"]
+    unverified = ["guided parity for installation, exchange and lifecycle"]
+    if not detail.get("network_lifecycle"):
+        unverified.append("network peer exit and fenced restore with fresh serving identity")
     if detail.get("host", {}).get("verdict") != "PASS":
         unverified.append("Codex local installation and enabled-skill discovery")
     browser = detail.get("browser")

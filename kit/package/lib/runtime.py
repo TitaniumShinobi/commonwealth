@@ -129,7 +129,18 @@ def call(config, endpoint, request, expected):
                 raise ValueError("reference_identity_mismatch")
             with channel.makefile("rwb") as stream:
                 send(stream, request)
-                return receive(stream)
+                response = receive(stream)
+                if response.get("decision") == "peer_challenge":
+                    challenge = response["challenge"]
+                    if (challenge["request_sha256"] != sha(canonical(request))
+                            or challenge["serving_sha256"] != expected
+                            or challenge["service"] != request["service"]):
+                        raise ValueError("authority_challenge_mismatch")
+                    send(stream, {"nonce": challenge["nonce"],
+                                  "certificate": Path(config["client_certificate"]).read_text(),
+                                  "signature": sign(config["client_key"], challenge)})
+                    response = receive(stream)
+                return response
 
 
 def peer_state(config):
@@ -186,7 +197,12 @@ def listener(config_path, ready_path):
                 if "authority_socket" in config:
                     from network9 import relay
                     try:
-                        reply = relay(config["authority_socket"], peer, request, list(self.server.server_address))
+                        endpoint = list(self.server.server_address)
+                        reply = relay(config["authority_socket"], request, endpoint)
+                        if reply.get("decision") == "peer_challenge":
+                            send(self.wfile, reply)
+                            proof = receive(self.rfile)
+                            reply = relay(config["authority_socket"], request, endpoint, proof)
                     except (OSError, ValueError):
                         reply = {"decision": "denied", "reason": "authority_unavailable",
                                  "request_id": request.get("request_id"), "mutated": False}
