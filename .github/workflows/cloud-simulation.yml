@@ -481,7 +481,7 @@ jobs:
           print(json.dumps({key: data[key] for key in ("revision", "verdict", "incomplete", "unverified_gates")}))
           for offset in range(0, len(data["checks"]), 8):
               print(json.dumps({"offset": offset, "checks": data["checks"][offset:offset+8]}))
-          for key in ("host", "browser", "extension", "network_lifecycle", "guided_network_clicks", "guided_network_lifecycle"):
+          for key in ("host", "browser", "extension", "network_lifecycle", "guided_network_clicks", "guided_network_lifecycle", "installation_clicks"):
               if key in data["detail"]:
                   print(json.dumps({"scope": key, "evidence": data["detail"][key]})[:16000])
           PY
@@ -529,7 +529,7 @@ jobs:
             sudo -n rm -rf -- "$CW_HOST_PUBLIC"
           fi
 
-      - name: Enforce paired guided and command fixture verdict
+      - name: Enforce guided and command acceptance receipt verdict
         if: always()
         run: |
           python3 - "${RUNNER_TEMP}/kit-consumer/step9/step-9.json" <<'PY'

@@ -192,6 +192,90 @@ def install(args):
             "release_sha256": metadata["sha256"], "root_sha256": fingerprint}
 
 
+def guided_install(args):
+    import hmac
+    import html
+    import http.server
+    import secrets
+    import time
+    from urllib.parse import parse_qs, urlsplit
+
+    launch, cookie, nonce = (secrets.token_urlsafe(32) for _ in range(3))
+    expires = 0
+    stage = 0
+
+    class Guide(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def show(self, status, result, session=False):
+            page = '<!doctype html><title>Commonwealth installation</title><pre id="result">'
+            page += html.escape(canonical(result).decode()) + '</pre>'
+            if status == 200:
+                for endpoint, label in (("plan", "Verify release"), ("approve", "Approve verified installation"),
+                                        ("apply", "Install verified Kit"), ("bootstrap", "Create operator")):
+                    page += (f'<form method="post" action="/{endpoint}"><input type="hidden" name="csrf" '
+                             f'value="{nonce}"><button id="{endpoint}-button">{label}</button></form>')
+            body = page.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")
+            self.send_header("Content-Length", str(len(body)))
+            if session:
+                self.send_header("Set-Cookie", f"cw={cookie}; HttpOnly; SameSite=Strict; Path=/")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            nonlocal expires
+            target = urlsplit(self.path)
+            tokens = parse_qs(target.query).get("token", [""])
+            if (self.headers.get("Host") != host or expires or target.path != "/launch"
+                    or not hmac.compare_digest(tokens[0], launch)):
+                return self.show(403, {"decision": "request_denied"})
+            expires = time.monotonic() + 90
+            self.show(200, {"decision": "session_ready"}, session=True)
+
+        def do_POST(self):
+            nonlocal stage
+            if (self.headers.get("Host") != host or self.headers.get("Origin") != f"http://{host}"
+                    or self.headers.get("Cookie") != f"cw={cookie}" or time.monotonic() >= expires):
+                return self.show(403, {"decision": "request_denied"})
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 512 or parse_qs(self.rfile.read(size).decode()).get("csrf") != [nonce]:
+                    raise Rejected("request_denied")
+                if stage == 0 and self.path == "/plan":
+                    reviewed = plan(args)
+                    write(args.out, reviewed)
+                    effect = {"decision": "verified_plan", **approve(reviewed)}
+                elif stage == 1 and self.path == "/approve":
+                    write(args.approval, approve(load(args.out)))
+                    effect = {"decision": "approved"}
+                elif stage == 2 and self.path == "/apply":
+                    from argparse import Namespace
+                    effect = install(Namespace(plan=args.out, target=args.target, approval=args.approval))
+                elif stage == 3 and self.path == "/bootstrap":
+                    result = subprocess.run([str(Path(args.target) / "bin/commonwealth"), "operator", "bootstrap",
+                                             "--authority", args.authority, "--name", args.name],
+                                            capture_output=True, check=True, timeout=12)
+                    effect = json.loads(result.stdout)
+                else:
+                    raise Rejected("explicit_confirmation_required")
+                stage += 1
+                self.show(200, effect)
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError) as exc:
+                self.show(422, {"decision": "rejected", "reason": str(exc)})
+
+    with http.server.HTTPServer(("127.0.0.1", 0), Guide) as server:
+        host = f"127.0.0.1:{server.server_port}"
+        fd = os.open(args.ready, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as out:
+            json.dump({"url": f"http://{host}/launch?token={launch}"}, out)
+        server.serve_forever()
+
+
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -199,12 +283,19 @@ def main():
     for name in ("manifest", "signature", "archive", "trust-root", "target", "out", "revision", "fingerprint"):
         planned.add_argument(f"--{name}", required=True)
     planned.add_argument("--version", default=VERSION)
+    guide = commands.add_parser("guide", parents=[], help="Start the trusted loopback installer")
+    for name in ("manifest", "signature", "archive", "trust-root", "target", "out", "revision",
+                 "fingerprint", "ready", "approval", "authority", "name"):
+        guide.add_argument(f"--{name}", required=True)
+    guide.add_argument("--version", default=VERSION)
     applied = commands.add_parser("apply")
     applied.add_argument("--plan", required=True)
     applied.add_argument("--target", required=True)
     applied.add_argument("--approval")
     args = parser.parse_args()
     try:
+        if args.command == "guide":
+            return guided_install(args)
         if args.command == "plan":
             value = plan(args)
             write(args.out, value)

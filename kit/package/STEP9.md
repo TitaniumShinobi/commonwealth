@@ -40,3 +40,26 @@ With the peer named `local-counterpart`, expect `commonwealth-reference-v1` for 
 The fixture tests local lifecycle authority state, including a modeled blocked restore and preservation of a peer withdrawal and binding floor across application-state restoration. Full installed network-peer lifecycle and complete browser/CLI lifecycle parity have separate evidence gates. The independent status extension uses the published protocol profile and its own Python implementation, source and artifact hashes, TLS endpoint, and publication authority. The fixture tests compatible build, incompatible startup, and version rejection on the active service.
 
 The optional package targets the explicitly exercised Codex Linux x64 build only. The cloud job supplies a disposable public workspace under an unprivileged identity, stages the official host binary by release archive SHA-256, and attempts local App Server installation and skill discovery without model calls. Host compatibility requires actual host results. Neither release publication nor unsupported hosts are in scope.
+
+## Run the trusted installer and guided peer lifecycle
+
+Provision the verifier and the independently pinned release inputs before opening the guide. Run the following in a terminal and leave it running while you complete the browser steps. The target and authority directories must be absent.
+
+```bash
+python3 "$BOOTSTRAP/verify_kit.py" guide --manifest "$RELEASE/manifest.json" \
+  --signature "$RELEASE/manifest.sig" --archive "$RELEASE/commonwealth-kit-0.1.0-test.2.tar.gz" \
+  --trust-root "$BOOTSTRAP/release-root.pem" --fingerprint "$ROOT_FINGERPRINT" \
+  --revision "$SOURCE_SHA" --version 0.1.0-test.2 --target "$TARGET" \
+  --out "$WORK/install-plan.json" --approval "$WORK/install-approval.json" \
+  --ready "$WORK/installer-ready.json" --authority "$WORK/operator-private" --name fixture-operator
+```
+
+Open the one-time loopback URL in the readiness file. Click **Verify release**, **Approve verified installation**, **Install verified Kit**, then **Create operator**. For the CLI equivalent, run the verifier's `plan` command with the same release inputs, inspect the returned approval binding, write it to the approval file after local approval, and run `apply --plan "$WORK/install-plan.json" --approval "$WORK/install-approval.json" --target "$TARGET"`. Then invoke the installed `operator bootstrap` command above.
+
+In the installed operator guide, select the action and supply the exact target and JSON payload. Click **Review plan**, **Approve reviewed plan**, then **Apply approved plan**. The command equivalent is `operator plan --operation ACTION --target TARGET --payload FILE --out PLAN`, followed by `operator approve --plan PLAN --confirm --out APPROVAL` and `operator apply --plan PLAN --approval APPROVAL --target TARGET`. Pass the same `--authority` to each command.
+
+- Use `enroll` on each side with its independently reviewed peer card. Use `exchange` with `peer`, `service`, `action` set to `fixture.read`, and a unique `request_id`. The result includes the verified revision or a specific failure such as `discovery_unavailable`. Repeat from the unaffected peer to distinguish one unavailable endpoint from a wider outage.
+- Use `exit` with `operator` set to the peer name. Apply independently at both endpoints. Verify the withdrawn client cannot read at the destination.
+- The fixture lifecycle uses `service-activate`, `service-backup`, `service-fence`, then `service-restore` under the serving authority. Each payload includes the approved `identity` with `operator`, `service`, `generation`, `certificate` SHA-256, and absolute `application` path. The target is that application path. Restore also requires the authoritative `backup_sha256`, a clean target, a fresh serving certificate, and the next generation. Enroll the new signed binding and verify a peer read, then check that the old generation still rejects reads and writes.
+
+The loopback fixture uses a protected authority broker and separate old-host OS identity. It does not configure a field or production service.

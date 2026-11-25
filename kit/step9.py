@@ -52,6 +52,33 @@ def install(boot, releases, root, name, version, revision):
     return target, r
 
 
+def install_guided(boot, releases, root, revision, chrome, authority):
+    trust = load(boot / "trust.json")
+    release = releases / "step9-base"
+    target = root / "kit"
+    version = "0.1.0-test.2"
+    if not chrome:
+        raise RuntimeError("guided installation browser unavailable")
+    for attempt in range(2):
+        ready = root / f"install-ready-{attempt}"
+        args = [sys.executable, boot / "verify_kit.py", "guide", "--manifest", release / "manifest.json",
+                "--signature", release / "manifest.sig", "--archive", release / f"commonwealth-kit-{version}.tar.gz",
+                "--trust-root", boot / "release-root.pem", "--fingerprint", trust["fingerprint"],
+                "--revision", revision, "--version", version, "--target", target, "--out", root / "install-plan",
+                "--approval", root / "install-approval", "--ready", ready, "--authority", authority, "--name", "guided"]
+        guide, listening = start(args, ready)
+        try:
+            process = subprocess.run([os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome,
+                                      listening["url"], str(target), "install"], capture_output=True, timeout=25)
+            if process.returncode == 0:
+                return target, json.loads(process.stdout)
+            if target.exists() or Path(authority).exists():
+                break
+        finally:
+            stop(guide)
+    raise RuntimeError("trusted installer clicks did not reach bootstrap")
+
+
 def operate(binary, directory, action, *args):
     return command(binary, "operator", action, "--authority", directory, *args)
 
@@ -335,6 +362,9 @@ def network_lifecycle(binary, root, client, reference, control, browser=None):
         score("old_listener_alive", None, old_process.poll())
         score("control_peer_continues", "commonwealth-reference-v1",
               exchange(binary, client, control, "life.reference", "fixture.read", "network-control").get("result"))
+        stop(proc)
+        score("troubleshooting_locates_transport_failure", "discovery_unavailable",
+              read("replacement-unavailable").get("reason"))
         stop(broker_process)
         unavailable = wire(client, old_seen["endpoint"], old_id["certificate"], "broker-stopped", "fixture.read")
         score("external_authority_unavailable_fail_closed", ["authority_unavailable", None, False],
@@ -351,11 +381,14 @@ def network_lifecycle(binary, root, client, reference, control, browser=None):
         isolated.cleanup()
 
 
-def lifecycle(binary, root, targets, boot, chrome, codex):
+def lifecycle(binary, root, targets, boot, chrome, codex, installation_clicks):
     scripted, guided, reference, counterpart, ext = [root / name for name in
                    ("scripted", "guided", "life-reference", "local-counterpart", "ext-operator")]
     for authority in (scripted, guided, reference, counterpart, ext):
-        ready = operate(binary, authority, "bootstrap", "--name", authority.name)
+        if authority == guided:
+            ready = installation_clicks[-1]
+        else:
+            ready = operate(binary, authority, "bootstrap", "--name", authority.name)
         check(authority.name + "_bootstrap_credential_roles", 4,
               len(set(ready.get("role_fingerprints", {}).values())))
     target = root / "target"
@@ -659,14 +692,19 @@ def main():
                 targets[name], installations[name] = install(boot, release, root, name, version, args.revision)
             guided_root = root / "guided-install"
             guided_root.mkdir()
-            targets["guided-base"], installations["guided-base"] = install(boot, release, guided_root,
-                "step9-base", "0.1.0-test.2", args.revision)
-            detail = {"installations": installations, **lifecycle(targets["step9-base"] / "bin/commonwealth",
-                      root, targets, boot, args.chrome, args.codex)}
+            targets["guided-base"], installation_clicks = install_guided(boot, release, guided_root,
+                args.revision, args.chrome, root / "guided")
+            for field in ("release_sha256", "inventory"):
+                proofs = [load(targets[name] / ".release-proof.json")[field] for name in ("step9-base", "guided-base")]
+                check("install_parity_" + field, proofs[0], proofs[1])
+            detail = {"installations": installations, "installation_clicks": installation_clicks, **lifecycle(targets["step9-base"] / "bin/commonwealth",
+                      root, targets, boot, args.chrome, args.codex, installation_clicks)}
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         error = str(exc)
     matched = not any(not row["matches"] for row in CHECKS)
-    unverified = ["guided parity for installation, exchange and lifecycle"]
+    unverified = []
+    if not detail.get("installation_clicks") or not detail.get("guided_network_lifecycle"):
+        unverified.append("guided parity for installation, exchange and lifecycle")
     if not detail.get("network_lifecycle"):
         unverified.append("network peer exit and fenced restore with fresh serving identity")
     if detail.get("host", {}).get("verdict") != "PASS":

@@ -50,12 +50,20 @@ try {
   }
   await call("Page.navigate", {url: launch});
   const events = [await decision("session_ready")];
-  const fields = JSON.stringify({target, payload: request});
-  await value("document.querySelector('select[name=action]').value=" + JSON.stringify(operation));
-  await value("(()=>{const values=" + fields + ";for(const [id,value] of Object.entries(values))document.getElementById(id).value=value; return true})()");
-  for (const [button, observed] of [["plan-button","planned"],["approve-button","approved"],["apply-button",outcome]]) {
-    await click(button);
-    events.push({control: button, ...await decision(observed)});
+  if (operation === "install") {
+    for (const [button, expected] of [["plan-button","verified_plan"],["approve-button","approved"],
+        ["apply-button","installed"],["bootstrap-button","bootstrapped"]]) {
+      await click(button);
+      events.push({control: button, ...await decision(expected)});
+    }
+  } else {
+    const fields = JSON.stringify({target, payload: request});
+    await value("document.querySelector('select[name=action]').value=" + JSON.stringify(operation));
+    await value("(()=>{const values=" + fields + ";for(const [id,value] of Object.entries(values))document.getElementById(id).value=value; return true})()");
+    for (const [button, observed] of [["plan-button","planned"],["approve-button","approved"],["apply-button",outcome]]) {
+      await click(button);
+      events.push({control: button, ...await decision(observed)});
+    }
   }
   console.log(JSON.stringify(events));
   socket.close();
