@@ -86,7 +86,7 @@ jobs:
               echo "::warning::Ubuntu conntrack could not be staged"
             fi
           fi
-      - name: Run Step 7 deterministic preparation and isolated Linux withdrawal and rollback
+      - name: Run Step 7 deterministic preparation and isolated Linux fail-closed restart and rollback
         run: |
           root="$RUNNER_TEMP/commonwealth"
           model=0

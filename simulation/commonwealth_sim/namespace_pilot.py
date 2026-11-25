@@ -287,9 +287,12 @@ def exercise(profile, config):
         durable = tuple(ledger.read_text().splitlines())
         f.program("g", replace + firewall(guest, wan, durable, close=True))
         closed_policy = f.run("nft", "-s", "list", "chain", "inet", "cw", "forward", namespace="g").stdout
-        f.check("denial_read_back_before_forwarding_resume", True,
-                all(f"ip {direction}addr {durable[0]} counter drop" in closed_policy
-                    for direction in ("s", "d")) and "oifname" not in closed_policy)
+        denial_verified = (bool(durable) and all(
+            f"ip {direction}addr {address} counter drop" in closed_policy
+            for direction in ("s", "d") for address in durable) and "oifname" not in closed_policy)
+        f.check("denial_read_back_before_forwarding_resume", True, denial_verified)
+        if not denial_verified:
+            raise RuntimeError("policy restart blocked forwarding because denial readback failed")
         f.policy_events.append("revocation_read_back_while_closed")
         f.program("g", replace + firewall(guest, wan, durable))
         f.policy_events.append("forwarding_resumed_with_revocation")
@@ -308,8 +311,12 @@ def exercise(profile, config):
         tracked["control_before_rollback"] = f.tracked(conntrack, "192.0.2.11")
         f.check("control_conntrack_exists_before_rollback", True,
                 any("ESTABLISHED" in x for x in tracked["control_before_rollback"]))
-        f.check("baseline_digest_before_restore", captured, hashlib.sha256(baseline.encode()).hexdigest())
-        f.check("baseline_target_before_restore", custody["target"], f.prefix + "g")
+        restore_digest = hashlib.sha256(baseline.encode()).hexdigest()
+        restore_target = f.prefix + "g"
+        f.check("baseline_digest_before_restore", captured, restore_digest)
+        f.check("baseline_target_before_restore", custody["target"], restore_target)
+        if restore_digest != captured or restore_target != custody["target"]:
+            raise RuntimeError("captured baseline does not match rollback target and digest")
         digests["rollback_captured_baseline"] = f.program("g", replace + baseline)
         restored = f.run("nft", "-s", "list", "ruleset", namespace="g").stdout
         custody["restored_pre_overlay_sha256"] = hashlib.sha256(restored.encode()).hexdigest()
