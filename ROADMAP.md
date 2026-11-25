@@ -63,7 +63,8 @@
 - Show the guided setup, two independently administered nodes, one authorized service exchange, one out-of-scope denial, and the clean-host restore receipt. Show B recognizing the restored service under its existing policy while B’s own workload continues. Label the demonstration as classical federation.
 - Ask whether the exercise is teachable and independently reproducible, and which supervised academic route fits. Outreach requires separate authorization.
 
-9. **Finish guides, official plugins and independent setup.** [PLUG AND PLAY]
+9. **Finish guides, official plugins and independent setup.** [STEP 9 PASS · CLOUD FIXTURE]
+   - QC + CleanGPT independently passed implementation `ec223d98f9e397718472c97ab0c8ead483f2773e`. [Smoke, Steps 3–8 regressions, and 149 Step 9 checks](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45716605102). [Verified receipt archive](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45716605102/artifacts/15070456485). UAT replication remains pending.
    - Provide guided clicks, equivalent how-to commands and optional official plugins for supported AI hosts. Cover installation, first exchange, common failures, upgrades, exit and restore.
    - Keep secrets and privileged controls under local authority. Demonstrate a rejected unauthorized plugin change, unchanged target state and no credential disclosure.
    - Use the local counterpart during a LIFE sandbox outage. A separate operator builds and publishes a compatible extension, then proves interoperability and unsupported-version handling with an independent peer.
