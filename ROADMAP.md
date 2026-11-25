@@ -40,7 +40,10 @@
    - Operator B accepts the valid replacement under its existing trust and policy. B’s independent workload stays within its continuity limit. Record recovery time, restored-data age, and evidence of zero founder intervention.
    - Separately score revoked credentials, tampered backup and unauthorized rejoin. Exercise authority-store recovery without restoring stale policy or revocation state.
 
-7. **Prepare the real Internet pilot.** [NEXT · PARALLEL FIELD TRACK · TARGET NOVEMBER 30, 2026 · LIVE ACTIVATION HELD]
+7. **Prepare the real Internet pilot.** [PREPARATION PASS · FIELD READINESS AND ACCEPTANCE UNVERIFIED · TARGET NOVEMBER 30, 2026 · LIVE ACTIVATION HELD]
+   - QC and CleanGPT independently passed cloud preparation at [`0bdbd3b`](https://github.com/TitaniumShinobi/commonwealth/commit/0bdbd3bf76a201c55759bd26fad4bb952d2a507d). [Operator and rollback runbook](pilot/README.md) · [Field evidence template](pilot/field-receipt.json).
+   - [Cloud job and receipts](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45667937866/job/139395082561) · [Archived evidence](https://github.com/TitaniumShinobi/commonwealth/actions/runs/45667937866/artifacts/15048356714). Smoke first, 219 Step 3–5 regressions, two Step 6 executions of 852 checks each with 11 matching replay pairs, 105 deterministic Step 7 checks, and 47 isolated Linux checks passed.
+   - Field readiness still requires direct site, operator, funding, upstream, equipment, and approved test-window evidence. Field acceptance requires the authorized ordinary-device run. Cloud evidence provides no field verdict.
    - Prepare this track alongside cloud simulation. Score readiness from site and service evidence.
    - Confirm one approved site, accountable operator and funding owner, permitted participant use, authorized upstream, compatible equipment, support and recovery responsibilities.
    - Use an existing authorized uplink when available. Starlink, fiber and terrestrial radio are candidates. Confirm the actual provider arrangement and any costs at the site.
