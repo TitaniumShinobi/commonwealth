@@ -163,29 +163,33 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
     canary = "PRIVATE-FIXTURE-SECRET-9"
     (scripted / "private-canary").write_text(canary)
     details = {"diagnostic": diagnostic}
-    if chrome:
+    guided_observations = []
+    def guided_apply(operation, body, expected):
+        if not chrome:
+            return None
         for attempt in range(2):
-            address = root / f"guide-ready-{attempt}"
+            address = root / f"guide-{len(guided_observations)}-{attempt}"
             guide, ready = start([binary, "operator", "guide", "--authority", guided, "--ready", address], address)
             try:
                 browser = subprocess.run(
-                    [os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome, ready["url"], str(target)],
-                    capture_output=True, timeout=20)
-                if browser.returncode:
-                    diagnostic = browser.stderr.decode(errors="replace").replace(ready["url"], "<private launch URL>")
-                    details["browser"] = {"verdict": "UNVERIFIED", "reason": "browser process failed",
-                                          "diagnostic": diagnostic[-1400:]}
-                    continue
-                details["browser"] = json.loads(browser.stdout)
-                check("browser_setup_parity", operate(binary, scripted, "inspect")["settings"],
-                      operate(binary, guided, "inspect")["settings"])
-                break
+                    [os.environ.get("CW_NODE", "node"), str(boot / "browser9.mjs"), chrome, ready["url"], str(target),
+                     operation, canonical(body).decode(), expected], capture_output=True, timeout=20)
+                if browser.returncode == 0:
+                    events = json.loads(browser.stdout)
+                    guided_observations.append({"operation": operation, "clicks": events})
+                    return events[-1]
             except subprocess.TimeoutExpired:
-                details["browser"] = {"verdict": "UNVERIFIED", "reason": "browser process timed out"}
+                pass
             finally:
                 stop(guide)
-    else:
-        details["browser"] = {"verdict": "UNVERIFIED", "reason": "headless browser unavailable"}
+        guided_observations.append({"operation": operation, "verdict": "UNVERIFIED"})
+        return None
+
+    configured = guided_apply("configure", {"name": "fixture-operator", "protocol": 1}, "applied")
+    if configured:
+        check("browser_setup_parity", operate(binary, scripted, "inspect")["settings"],
+              operate(binary, guided, "inspect")["settings"])
+    details["browser"] = guided_observations
 
     def inspect_http(url, data=None, headers=None):
         request = urllib.request.Request(url, data=data, headers=headers or {})
@@ -282,6 +286,12 @@ def lifecycle(binary, root, targets, boot, chrome, codex):
             selected = operate(binary, scripted, "inspect")["selected_configuration"]
             check(label + "_selection", ["applied" if success else "denied", str(chosen) if success else old],
                   [result["decision"], selected])
+            guided_result = guided_apply(operation, candidate, result["decision"])
+            if guided_result:
+                check(label + "_guided_parity",
+                      [result["decision"], result.get("reason"), selected],
+                      [guided_result["decision"], guided_result.get("reason"),
+                       operate(binary, guided, "inspect").get("selected_configuration")])
             check(label + "_selected_client_exchange", "commonwealth-reference-v1",
                   request(Path(selected) / "bin/commonwealth", "local-counterpart", label).get("result"))
 
@@ -420,7 +430,7 @@ def main():
     if detail.get("host", {}).get("verdict") != "PASS":
         unverified.append("Codex local installation and enabled-skill discovery")
     browser = detail.get("browser")
-    if not browser or (isinstance(browser, dict) and browser.get("verdict") == "UNVERIFIED"):
+    if not browser or any(row.get("verdict") == "UNVERIFIED" for row in browser):
         unverified.append("browser setup clicks")
     verdict = "FAIL" if not matched else "UNVERIFIED" if unverified or error else "PASS"
     receipt = {"revision": args.revision, "verdict": verdict, "incomplete": error,

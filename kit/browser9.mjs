@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-const [chrome, launch, target] = process.argv.slice(2);
+const [chrome, launch, target, operation = "configure", request = '{"name":"fixture-operator","protocol":1}', outcome = "applied"] = process.argv.slice(2);
 const profile = await mkdtemp(join(tmpdir(), "cw-browser-"));
 const browser = spawn(chrome, ["--headless", "--no-sandbox", "--disable-gpu",
   "--disable-background-networking", "--no-first-run", "--remote-debugging-port=0",
@@ -50,9 +50,10 @@ try {
   }
   await call("Page.navigate", {url: launch});
   const events = [await decision("session_ready")];
-  const fields = JSON.stringify({target, payload: '{"name":"fixture-operator","protocol":1}'});
+  const fields = JSON.stringify({target, payload: request});
+  await value("document.querySelector('select[name=action]').value=" + JSON.stringify(operation));
   await value("(()=>{const values=" + fields + ";for(const [id,value] of Object.entries(values))document.getElementById(id).value=value; return true})()");
-  for (const [button, observed] of [["plan-button","planned"],["approve-button","approved"],["apply-button","applied"]]) {
+  for (const [button, observed] of [["plan-button","planned"],["approve-button","approved"],["apply-button",outcome]]) {
     await click(button);
     events.push({control: button, ...await decision(observed)});
   }
