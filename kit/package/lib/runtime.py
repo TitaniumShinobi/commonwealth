@@ -202,7 +202,8 @@ def listener(config_path, ready_path):
 def setup_plan(args):
     config_path = Path(args.config).resolve()
     value = load(config_path)
-    names = ("ca", "certificate", "tls_key", "operator_public", "operator_key", "publication_public",
+    names = ("ca", "certificate", "tls_key", "client_certificate", "client_key",
+             "operator_public", "operator_key", "publication_public",
              "publication_key", "state", "audit", "node_config", "peer_state")
     value = paths(value, config_path, names)
     plan = {"actor": "fixture-local-operator", "action": args.mode, "target": str(Path(args.target).resolve()),
@@ -235,7 +236,7 @@ def setup_apply(args):
 
 def trust(args):
     card = paths(load(args.reference), args.reference, ("operator_public", "publication_public"))
-    approval = load(args.approval)
+    approval = load(args.approval) if args.approval and Path(args.approval).is_file() else None
     if approval != {"actor": "fixture-local-operator", "accept": True,
                     "operator_sha256": card["operator_sha256"]}:
         raise ValueError("local_reference_declined")

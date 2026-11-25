@@ -44,3 +44,5 @@ Plan and apply mode `lab` with a separate target. Its configuration names the in
 ```
 
 Use the published [adapter contract](ADAPTER.md). The cloud receipt authenticates the archive and installed entry-point digests, correlates client and server request IDs, and records simulation, replay, and cleanup separately. The tested fixture establishes neither production release authority nor a public deployment, independent organizational custody, field acceptance, or a physical result.
+
+The public bootstrap's `consume.py` fixture driver provisions the example inputs, applies both setup modes, and prints the exact command argv and receipts. In the cloud job, the driver receives only the separately downloaded bootstrap and release artifacts. The observer consumes only public receipts, not the temporary role stores.

@@ -167,6 +167,20 @@ def setup(binary, work, name, config, mode):
     result = command(binary, "setup", "plan", "--mode", mode, "--config", config, "--target", target, "--out", planned)
     check(name + "_setup_plan", "planned", result["decision"])
     write(approval, approve(load(planned)))
+    if mode == "node":
+        without = command(binary, "setup", "apply", "--plan", planned, "--target", target)
+        check("node_setup_missing_approval", ["approval_required", False],
+              [without.get("reason"), target.exists()])
+        other = work / "setup-substituted"
+        wrong = command(binary, "setup", "apply", "--plan", planned, "--approval", approval, "--target", other)
+        check("node_setup_changed_target", ["approved_target_changed", False, False],
+              [wrong.get("reason"), target.exists(), other.exists()])
+        original = load(planned)
+        changed = {**original, "configuration": {**original["configuration"], "host": "invalid"}}
+        write(planned, changed)
+        wrong = command(binary, "setup", "apply", "--plan", planned, "--approval", approval, "--target", target)
+        check("node_setup_changed_plan", ["approved_plan_changed", False], [wrong.get("reason"), target.exists()])
+        write(planned, original)
     applied = command(binary, "setup", "apply", "--plan", planned, "--target", target, "--approval", approval)
     check(name + "_setup_apply", "applied", applied["decision"])
     return target / "config.json", load(approval), applied["origin"]
@@ -209,7 +223,14 @@ def runtime(target, work):
     operator_source = configure(work, "operator-node", ca, ca_key, 3)
     participant_id = sha(ssl("x509", "-in", load(participant)["client_certificate"], "-outform", "DER"))
     write(life, {**load(life), "participant_grants": [participant_id]})
+    relative_config = load(operator_source)
+    for key in ("client_certificate", "client_key"):
+        relative_config[key] = Path(relative_config[key]).name
+    write(operator_source, relative_config)
     operator, op_approval, setup_origin = setup(binary, work, "operator", operator_source, "node")
+    check("node_setup_resolves_workload_paths_from_source", True,
+          all(Path(load(operator)[key]).parent == operator_source.parent
+              for key in ("client_certificate", "client_key")))
     launched = []
     origins = [setup_origin]
     approvals = {"node": op_approval}

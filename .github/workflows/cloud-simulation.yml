@@ -281,7 +281,7 @@ jobs:
               json.dump({role: {"id": os.environ[role + "_ID"], "sha256": os.environ[role + "_SHA"]}
                          for role in ("BOOT", "RELEASE")}, out)
           PY
-      - name: Exercise installed Kit in loopback-only namespace
+      - name: Exercise installed Kit and setup authority in loopback-only namespace
         run: |
           root="$RUNNER_TEMP/kit-consumer"
           mkdir "$root/empty" "$root/evidence"
