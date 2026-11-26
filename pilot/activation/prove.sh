@@ -195,7 +195,8 @@ deny 'restart from persisted default-closed configuration'
 e nft list ruleset > "$out/restarted-kernel.nft"
 e nft -f "$out/open.nft"
 client > "$out/https-rollback.txt"
-grep -E '^2[0-9]{2} [0-9.]+ 0
+grep -E '^2[0-9]{2} [0-9.]+ 0$' "$out/https-rollback.txt"
+emit 'PASS: approved baseline restored before withdrawal'
 python3 "$src/edge.py" approve "$out/target.json" withdraw "$operator/operator.key" > "$out/withdrawal.json"
 python3 "$src/edge.py" render "$out/target.json" withdraw "$out/withdrawal.json" "$operator/operator.pub" > "$out/withdrawn.nft"
 e nft --check -f "$out/withdrawn.nft"
@@ -204,6 +205,8 @@ e conntrack -D -p tcp -s "$leased" --dport 443 > "$out/conntrack-delete.txt" 2>&
 e conntrack -L -p tcp -s "$leased" --dport 443 > "$out/conntrack-after.txt"
 test ! -s "$out/conntrack-after.txt"
 deny 'withdrawal and conntrack cleanup'
+e nft -f "$out/closed.nft"
+deny 'closed startup after withdrawal'
 sha256sum "$out/target.json" "$out/"*.nft > "$out/config-digests.txt"
 python3 "$src/field_check.py" "$src/../field-receipt.json" > "$out/field-assessment.json"
 python3 - "$out/field-assessment.json" <<'PY'
@@ -215,16 +218,4 @@ assert report["assessment"]["field_acceptance"] == "UNVERIFIED"
 assert report["assessment"]["activation"] == "HELD"
 PY
 emit 'PASS: offline field checker preserves absent-evidence verdict and held activation'
-emit "PASS: guest-edge wired fixture revision $GITHUB_SHA"
- "$out/https-rollback.txt"
-emit 'PASS: approved baseline restored before withdrawal'
-python3 "$src/edge.py" approve "$out/target.json" withdraw "$operator/operator.key" > "$out/withdrawal.json"
-python3 "$src/edge.py" render "$out/target.json" withdraw "$out/withdrawal.json" "$operator/operator.pub" > "$out/withdrawn.nft"
-e nft --check -f "$out/withdrawn.nft"
-e nft -f "$out/withdrawn.nft"
-e conntrack -D -p tcp -s "$leased" --dport 443 > "$out/conntrack-delete.txt" 2>&1
-e conntrack -L -p tcp -s "$leased" --dport 443 > "$out/conntrack-after.txt"
-test ! -s "$out/conntrack-after.txt"
-deny 'withdrawal and conntrack cleanup'
-sha256sum "$out/target.json" "$out/"*.nft > "$out/config-digests.txt"
 emit "PASS: guest-edge wired fixture revision $GITHUB_SHA"
