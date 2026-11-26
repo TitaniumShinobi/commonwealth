@@ -5,9 +5,10 @@ out=$1
 src=$(realpath "$(dirname "$0")")
 guest="cwg$$"
 edge="cwe$$"
-uplink="cwu$"
-attacker="cwa$"
-peer="cwp$"
+uplink="cwu$$"
+attacker="cwa$$"
+peer="cwp$$"
+unaffected="cwc$$"
 operator=$(mktemp -d)
 rmdir "$operator"
 peer_keys=$(mktemp -d)
