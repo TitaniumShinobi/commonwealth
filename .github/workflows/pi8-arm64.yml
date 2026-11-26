@@ -1,0 +1,57 @@
+name: ARM64 8 GiB qualification
+on:
+  workflow_dispatch:
+  push:
+    branches: [pi8-arm64-qualification]
+    paths:
+      - .github/workflows/pi8-arm64.yml
+      - pilot/pi8/**
+permissions:
+  contents: read
+  actions: read
+jobs:
+  pi8:
+    if: github.ref_name == 'pi8-arm64-qualification'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: ARM64 runner and isolation smoke
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pi8-evidence"
+          mkdir -p "$out"
+          {
+            git rev-parse HEAD
+            uname -a
+            dpkg --print-architecture
+            cat /etc/os-release
+            df -B1 / /tmp /home /var/tmp
+            free -b
+            test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+            test "$(uname -m)" = aarch64
+            test "$(dpkg --print-architecture)" = arm64
+            test -r /sys/fs/cgroup/cgroup.controllers
+            sudo -n unshare --net -- sh -ec 'ip link set lo up; test -z "$(ip route show default)"; ip -br link'
+          } | tee "$out/smoke.txt"
+      - name: Collect ARM64 installer provenance
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pi8-evidence"
+          wget -q --timeout=30 --tries=2 \
+            -O "$RUNNER_TEMP/uos-installer" \
+            'https://fw-download.ubnt.com/data/unifi-os-server/f730-linux-arm64-5.1.42-d2bca8bd-d6fc-4d20-99e5-b78235843c2f.42-arm64'
+          sha256sum "$RUNNER_TEMP/uos-installer" | tee "$out/installer.sha256"
+          stat -c '%s bytes' "$RUNNER_TEMP/uos-installer" | tee "$out/installer-size.txt"
+          file "$RUNNER_TEMP/uos-installer" | tee "$out/installer-type.txt"
+      - name: Preserve qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pi8-arm64-evidence
+          path: ${{ runner.temp }}/pi8-evidence
+          if-no-files-found: error
+          retention-days: 14
