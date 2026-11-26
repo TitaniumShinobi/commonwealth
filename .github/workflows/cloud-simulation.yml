@@ -6,11 +6,13 @@ on:
       - step-9-independent-setup
       - step-11-simulated-quantum
       - step-7-activation-readiness
+      - wifi-withdrawal-review
     paths:
       - .github/workflows/cloud-simulation.yml
       - kit/package/STEP9.md
       - simulation/step11/**
       - pilot/activation/**
+      - pilot/wifi/**
 permissions:
   contents: read
   actions: read
@@ -557,7 +559,7 @@ jobs:
           PY
 
   step-11:
-    if: github.ref_name == 'step-11-simulated-quantum' || github.ref_name == 'step-7-activation-readiness'
+    if: github.ref_name == 'step-11-simulated-quantum' || github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review'
     needs: step-8-consumer
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -646,7 +648,7 @@ jobs:
           PY
 
   activation-readiness:
-    if: github.ref_name == 'step-7-activation-readiness'
+    if: github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review'
     needs: step-11
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -713,4 +715,68 @@ jobs:
                       raise SystemExit(f"custody mismatch: {name}")
                   hashes[name] = hashlib.sha256(raw).hexdigest()
           print(json.dumps({"artifact": os.environ["ARCHIVE_ID"], "custody": "verified", "member_sha256": hashes}))
+          PY
+
+  wifi-withdrawal:
+    if: github.ref_name == 'wifi-withdrawal-review'
+    needs: activation-readiness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Stage namespace enforcement tooling
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sudo -n apt-get update -qq
+          sudo -n apt-get install -y -qq conntrack nftables
+      - name: Exercise signed AP readback and withdrawal
+        run: |
+          PYTHONPATH="simulation:pilot/activation" python3 pilot/wifi/prove.py "$RUNNER_TEMP/wifi-proof"
+      - name: Print exact bounded receipt
+        if: always()
+        run: |
+          receipt="$RUNNER_TEMP/wifi-proof/receipt.json"
+          if [[ -f "$receipt" ]]; then
+            test "$(stat -c %s "$receipt")" -le 65536
+            cat "$receipt"
+          fi
+      - name: Preserve withdrawal receipt
+        id: wifi_artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wifi-withdrawal-evidence
+          path: ${{ runner.temp }}/wifi-proof/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify withdrawal receipt after download
+        if: always() && steps.wifi_artifact.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_ID: ${{ steps.wifi_artifact.outputs.artifact-id }}
+          ARCHIVE_SHA: ${{ steps.wifi_artifact.outputs.artifact-digest }}
+        run: |
+          root="$RUNNER_TEMP/wifi-proof"
+          for attempt in {1..6}; do
+            if curl --fail --silent --show-error --location --max-time 10 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARCHIVE_ID/zip" \
+              -o "$root/archive.zip"; then break; fi
+            if [[ "$attempt" == 6 ]]; then exit 2; fi
+            sleep 2
+          done
+          echo "${ARCHIVE_SHA#sha256:}  $root/archive.zip" | sha256sum --check
+          python3 - "$root" <<'PY'
+          import hashlib, json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          with zipfile.ZipFile(root / "archive.zip") as archive:
+              raw = archive.read("receipt.json")
+              if archive.namelist() != ["receipt.json"] or raw != (root / "receipt.json").read_bytes():
+                  raise SystemExit("receipt custody mismatch")
+          print(json.dumps({"wifi_custody": "verified", "artifact": os.environ["ARCHIVE_ID"],
+                            "member_sha256": hashlib.sha256(raw).hexdigest()}))
           PY
