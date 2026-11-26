@@ -7,6 +7,7 @@ Wants=network-pre.target
 
 [Service]
 Type=oneshot
+ExecStartPre=/usr/sbin/sysctl -qw net.ipv4.ip_forward=0 net.ipv6.conf.all.forwarding=0
 ExecStart=/usr/bin/python3 /usr/local/lib/commonwealth/wifi/policy.py boot-closed /etc/commonwealth/wifi.json
 RemainAfterExit=yes
 

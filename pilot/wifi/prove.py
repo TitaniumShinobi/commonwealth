@@ -439,6 +439,98 @@ def run(out):
                    service_command("challenge", check=False).returncode != 0)
             expect("deployed_service_preserves_unrelated_traffic", "x", client_action(recovered_c, "echo"))
             evidence["deployed_service_guard"] = r(edge, "nft", "list", "table", "inet", "cw_wifi_guard")
+            # Qualify renewal on the actual live C VLAN with a separate operator state.
+            renewal_target = {**service_target, "credential": "control-guest", "vlan": 102,
+                              "interface": "guest102", "subnet": "10.77.102.0/24"}
+            renewal_config = {**json.loads(configuration.read_text()), **renewal_target,
+                              "state": str(work / "renewal-state"), "lease_seconds": 10}
+            configuration.write_text(json.dumps(renewal_config))
+            book = work / "renewal-state" / "live-until"
+            def renewal_files(kind, issuer):
+                operation = "renew-challenge" if kind == "renew" else "challenge"
+                fresh = json.loads(service_command(operation).stdout.splitlines()[0])
+                admit_envelope.write_text(json.dumps(sign(operator, {**renewal_target, "intent": kind})))
+                readback_envelope.write_text(json.dumps(sign(issuer, {**renewal_target, **fresh,
+                    "future_admission": "allowed", "vlan_credentials": [renewal_target["credential"]]})))
+                return fresh
+            def apply_lease(kind, check=True):
+                return service_command(kind, "--approval", admit_envelope, "--readback", readback_envelope,
+                                       check=check)
+            initial = renewal_files("admit", ap)
+            apply_lease("admit")
+            before_renewal = json.loads(f.run("cat", str(book)).stdout)
+            renewal_monitor = f.launch("c", CONTINUITY)
+            expect("renewal_live_probe_started", "sampled", f.line(renewal_monitor))
+            time.sleep(1.7)
+            fresh = renewal_files("renew", ap)
+            apply_lease("renew")
+            renewed = json.loads(f.run("cat", str(book)).stdout)
+            expect("authenticated_renewal_epoch_and_deadline_advance", True,
+                   fresh["epoch"] > initial["epoch"] and renewed["monotonic_until"] > before_renewal["monotonic_until"])
+            expect("same_renewal_replay_rejected", True, apply_lease("renew", check=False).returncode != 0)
+            expect("replay_does_not_extend_validity", renewed, json.loads(f.run("cat", str(book)).stdout))
+            renewal_files("renew", operator)
+            expect("invalid_ap_renewal_rejected", True, apply_lease("renew", check=False).returncode != 0)
+            expect("invalid_signature_does_not_extend_validity", renewed, json.loads(f.run("cat", str(book)).stdout))
+            time.sleep(max(0, renewed["monotonic_until"] - time.monotonic()) + 2.3)
+            renewal_monitor.stdin.write("stop\n")
+            renewal_monitor.stdin.flush()
+            renewal_samples = json.loads(f.line(renewal_monitor))
+            valid = [row for row in renewal_samples if row["started"] <= renewed["monotonic_until"] - 0.25]
+            expired = [row for row in renewal_samples if row["started"] >= renewed["monotonic_until"] + 0.15]
+            expect("fresh_traffic_uninterrupted_through_authentication_and_renewal", True,
+                   len(valid) >= 5 and all(row["fresh_echo"] for row in valid)
+                   and any(row["started"] > before_renewal["monotonic_until"] for row in valid))
+            expect("actual_kernel_expiry_blocks_ongoing_traffic_within_bound", True,
+                   len(expired) >= 2 and not any(row["fresh_echo"] for row in expired)
+                   and expired[0]["started"] - renewed["monotonic_until"] <= 1.0)
+            evidence["renewal"] = {"initial": before_renewal, "renewed": renewed, "samples": renewal_samples}
+            expect("expired_kernel_lease_cannot_renew", True, service_command("renew-challenge", check=False).returncode != 0)
+            signed.write_text(json.dumps(sign(operator, {**renewal_target, "intent": "withdraw"})))
+            service_command("withdraw", "--approval", signed)
+            expect("revoked_renew_challenge_denied", True, service_command("renew-challenge", check=False).returncode != 0)
+            # Restore the synthetic C segment before the independent startup fault probe.
+            configuration.write_text(json.dumps({**renewal_config, **service_target, "state": str(work / "deployed-state")}))
+            service_command("boot-closed")
+            expect("control_restored_after_expiry_measurement", False, denied_fresh("c"))
+
+            guard_unit = Path(__file__).with_name("commonwealth-wifi-guard.service").read_text()
+            forward_unit = Path(__file__).with_name("commonwealth-wifi-forward.service").read_text()
+            unit_prefix = f.prefix + "-boot"
+            guard_name = unit_prefix + "-guard.service"
+            forward_name = unit_prefix + "-forward.service"
+            units = []
+            try:
+                guard_source = work / guard_name
+                guard_source.write_text(guard_unit.replace("[Service]", "[Service]\nNetworkNamespacePath=/run/netns/" +
+                                      f.prefix + edge).replace(
+                                      "ExecStart=/usr/bin/python3 /usr/local/lib/commonwealth/wifi/policy.py boot-closed /etc/commonwealth/wifi.json",
+                                      "ExecStart=/usr/bin/false"))
+                forward_source = work / forward_name
+                forward_source.write_text(forward_unit.replace("commonwealth-wifi-guard.service", guard_name)
+                                          .replace("[Service]", "[Service]\nNetworkNamespacePath=/run/netns/" + f.prefix + edge))
+                for source in (guard_source, forward_source):
+                    path = "/run/systemd/system/" + source.name
+                    f.run("install", "-m", "0644", str(source), path)
+                    units.append(path)
+                f.run("systemctl", "daemon-reload")
+                attempt = f.run("systemctl", "start", forward_name, check=False)
+                expect("faulted_guard_blocks_systemd_forwarding_dependency", True, attempt.returncode != 0)
+                expect("faulted_guard_is_failed", "failed",
+                       f.run("systemctl", "is-active", guard_name, check=False).stdout.strip())
+                expect("faulted_boot_leaves_kernel_forwarding_off", "0", r(edge, "sysctl", "-n", "net.ipv4.ip_forward").strip())
+                expect("faulted_boot_blocks_new_control_forwarding", True, denied_fresh("c"))
+                evidence["startup_fault"] = {"scope": "systemd dependency with injected guard failure in fresh namespace",
+                                              "start_returncode": attempt.returncode, "detail": attempt.stderr}
+            finally:
+                f.run("systemctl", "stop", forward_name, guard_name, check=False)
+                if units:
+                    f.run("rm", "-f", *units)
+                f.run("systemctl", "daemon-reload")
+            r(edge, "sysctl", "-qw", "net.ipv4.ip_forward=1")
+            restored_c = f.launch("c", CLIENT)
+            expect("fresh_control_after_fault_recovery", "ready", f.line(restored_c))
+            expect("control_echo_after_fault_recovery", "x", client_action(restored_c, "echo"))
             ap_state.write_text(json.dumps({"future_admission": "denied", "vlan_credentials": [TARGET["credential"]]}))
             challenge = secrets.token_hex(16)
             future = ap_readback(challenge)
@@ -465,8 +557,9 @@ def run(out):
             for role in reversed(f.namespaces):
                 f.run("ip", "netns", "del", f.prefix + role, check=False)
             f.state.cleanup()
-            if (work / "deployed-state").exists():
-                f.run("chown", "-R", str(os.getuid()), str(work / "deployed-state"))
+            for directory in ("deployed-state", "renewal-state"):
+                if (work / directory).exists():
+                    f.run("chown", "-R", str(os.getuid()), str(work / directory))
 
 
 if __name__ == "__main__":

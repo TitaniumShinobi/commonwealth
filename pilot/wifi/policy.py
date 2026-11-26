@@ -8,6 +8,7 @@ import re
 import secrets
 import subprocess
 import time
+import tempfile
 from pathlib import Path
 
 from edge import encode, fingerprint, openssl
@@ -19,6 +20,19 @@ def write_once(path, value):
         output.flush()
         os.fsync(output.fileno())
     fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def replace_counter(directory, number):
+    with tempfile.NamedTemporaryFile("w", dir=directory, delete=False) as output:
+        output.write(str(number))
+        output.flush()
+        os.fsync(output.fileno())
+    Path(output.name).replace(directory / "epoch")
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)
     finally:
@@ -85,7 +99,7 @@ def run(*args, text=None, allowed=(0,)):
 
 def main():
     cli = argparse.ArgumentParser()
-    cli.add_argument("operation", choices=("boot-closed", "challenge", "admit", "withdraw"))
+    cli.add_argument("operation", choices=("boot-closed", "challenge", "admit", "renew-challenge", "renew", "withdraw"))
     cli.add_argument("configuration", type=Path)
     cli.add_argument("--approval", type=Path)
     cli.add_argument("--readback", type=Path)
@@ -99,8 +113,13 @@ def main():
     directory.mkdir(exist_ok=True, mode=0o700)
     if directory.is_symlink() or directory.stat().st_uid != os.geteuid() or directory.stat().st_mode & 0o077:
         raise ValueError("state must be a private directory owned by the service account")
+    lease_seconds = config.get("lease_seconds", 20)
+    if type(lease_seconds) is not int or not 6 <= lease_seconds <= 20:
+        raise ValueError("lease_seconds outside enforced bound")
     revoked = directory / "withdrawn.json"
     challenge = directory / "challenge.json"
+    lifetime = directory / "live-until"
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     operator = config["operator_public"]
     ap = config["ap_public"]
     target = {name: config[name] for name in ("edge", "ap", "credential", "generation", "vlan", "interface", "subnet")}
@@ -114,31 +133,50 @@ def main():
             remaining = run("conntrack", "-L", "-f", "ipv4", selector, prefix)
             if remaining.stdout.strip():
                 raise RuntimeError("withdrawn conntrack state remains")
+    def check_live():
+        active = read(lifetime)
+        if active["boot_id"] != boot_id or time.monotonic() >= active["monotonic_until"]:
+            raise ValueError("prior kernel admission expired")
+        live = run("nft", "list", "set", "inet", "cw_wifi_guard", "live_vlan").stdout
+        if f'elements = {{ "{interface}" timeout' not in live:
+            raise ValueError("no current admission to renew")
     with (directory / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if options.operation == "boot-closed":
             apply(True)
             challenge.unlink(missing_ok=True)
+            lifetime.unlink(missing_ok=True)
             clear()
-        elif options.operation == "challenge":
-            apply(True)
+        elif options.operation in ("challenge", "renew-challenge"):
+            if options.operation == "challenge":
+                apply(True)
+            else:
+                check_live()
             if revoked.exists():
                 raise ValueError("credential withdrawn")
             challenge.unlink(missing_ok=True)
-            statement = {"nonce": secrets.token_hex(24), "expires_at": int(time.time()) + 20}
+            epoch_path = directory / "epoch"
+            epoch = (int(epoch_path.read_text()) if epoch_path.exists() else 0) + 1
+            replace_counter(directory, epoch)
+            statement = {"nonce": secrets.token_hex(24), "epoch": epoch,
+                         "kind": "renew" if options.operation == "renew-challenge" else "admit",
+                         "expires_at": int(time.time()) + lease_seconds}
             write_once(challenge, statement)
             print(json.dumps(statement))
-        elif options.operation == "admit":
-            apply(True)
+        elif options.operation in ("admit", "renew"):
+            if options.operation == "admit":
+                apply(True)
             if revoked.exists():
                 raise ValueError("credential withdrawn")
             if fingerprint(operator) != config["operator_key_sha256"] or fingerprint(ap) != config["ap_key_sha256"]:
                 raise ValueError("public key pin mismatch")
             fresh = read(challenge)
             challenge.unlink()
+            if fresh["kind"] != options.operation or fresh["epoch"] != int((directory / "epoch").read_text()):
+                raise ValueError("stale challenge epoch")
             if time.time() >= fresh["expires_at"]:
                 raise ValueError("challenge expired")
-            verify(operator, read(options.approval), {**target, "intent": "admit"}, directory)
+            verify(operator, read(options.approval), {**target, "intent": options.operation}, directory)
             verify(ap, read(options.readback),
                    {**target, **fresh, "future_admission": "allowed",
                     "vlan_credentials": [config["credential"]]}, directory)
@@ -149,7 +187,14 @@ def main():
             ttl = int(fresh["expires_at"] - time.time()) - 1
             if ttl < 1:
                 raise ValueError("challenge expired before activation")
+            if options.operation == "renew":
+                check_live()
+            deadline = time.monotonic() + ttl
             apply(False, ttl)
+            with tempfile.NamedTemporaryFile("w", dir=directory, delete=False) as book:
+                json.dump({"boot_id": boot_id, "monotonic_until": deadline, "epoch": fresh["epoch"]}, book)
+                book.flush()
+            Path(book.name).replace(lifetime)
         else:
             signed = read(options.approval)
             if fingerprint(operator) != config["operator_key_sha256"]:
@@ -161,6 +206,8 @@ def main():
                 else:
                     write_once(revoked, signed)
             withdraw_transaction(lambda: apply(True), commit, clear)
+            lifetime.unlink(missing_ok=True)
+            challenge.unlink(missing_ok=True)
     print(json.dumps({"edge": config["edge"], "vlan": config["vlan"], "operation": options.operation, "result": "completed"}))
 
 
