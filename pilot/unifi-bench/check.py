@@ -280,7 +280,7 @@ def exercise_tagged_flow(root, controller_path, secret_path, case, sent_vlans, e
     return output, config_path
 
 
-def reject_mixed_sessions(controller_config, first, second):
+def reject_mixed_sessions(controller_config, first, second, *, match_hash=False):
     import sys
 
     first_output, _ = first
@@ -292,7 +292,19 @@ def reject_mixed_sessions(controller_config, first, second):
     second_hash = sha256(second_receipt.read_bytes()).hexdigest()
     tags = json.loads(second_tags.read_text())
     assert first_hash != second_hash and tags["controller_receipt_sha256"] == second_hash
-    first_finished = json.loads(first_receipt.read_text())["finished_at"]
+    controller = json.loads(first_receipt.read_text())
+    expected_stations = {row["client_id"]: (row["mac"], row["ipv4"], row["vlan"])
+                         for group in controller["configuration_observations"] for row in group["stations"]}
+    bench = json.loads(bench_config_path.read_text())
+    identity_mismatches = [row["role"] for row in bench["stations"]
+                           if expected_stations[row["client_id"]] != (row["mac"], row["source_ipv4"], row["vlan"])]
+    assert identity_mismatches == (["B"] if match_hash else [])
+    if match_hash:
+        # Rebind only the enclosing receipt hash. Preserve the real captures and timestamps.
+        tags["controller_receipt_sha256"] = first_hash
+        second_tags = second_output / "matching-hash-mixed-tags.json"
+        second_tags.write_text(json.dumps(tags))
+    first_finished = controller["finished_at"]
     second_capture_start = tags["received_tags"][0]["window_started"]
     assert 0 <= second_capture_start - first_finished <= 30, "keep both runs within the correlation time bound"
 
@@ -305,8 +317,12 @@ def reject_mixed_sessions(controller_config, first, second):
     assert report["tagged_dataplane"]["verdict"] == "PASS", report
     assert report["correlation"]["verdict"] == "UNVERIFIED", report
     assert report["signed_admission"] == "HELD", report
-    print(json.dumps({"case": "mixed_valid_operator_runs", "exit": execution.returncode, "score": report,
-                      "controller_sha256": first_hash, "capture_bound_controller_sha256": second_hash,
+    case = "mixed_station_identity_matching_hash" if match_hash else "mixed_valid_operator_runs"
+    print(json.dumps({"case": case, "exit": execution.returncode, "score": report,
+                      "controller_sha256": first_hash,
+                      "capture_original_controller_sha256": second_hash,
+                      "capture_bound_controller_sha256": tags["controller_receipt_sha256"],
+                      "identity_mismatches": identity_mismatches,
                       "controller_finished_at": first_finished, "capture_started_at": second_capture_start},
                      sort_keys=True))
 
@@ -356,6 +372,17 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
             second = exercise_tagged_flow(root, controller_path, secret_path,
                                           "all_expected_tags_second_run", expected_vlans, expected_tags)
             reject_mixed_sessions(controller_path, first, second)
+            station_b = next(row for row in bench_config["stations"] if row["role"] == "B")
+            original_mac = station_b["mac"]
+            changed_mac = "02:00:00:00:00:12"
+            client_b = clients[station_b["client_id"]]
+            try:
+                station_b["mac"] = client_b["macAddress"] = changed_mac
+                changed = exercise_tagged_flow(root, controller_path, secret_path,
+                                               "different_b_identity", expected_vlans, expected_tags)
+                reject_mixed_sessions(controller_path, first, changed, match_hash=True)
+            finally:
+                station_b["mac"] = client_b["macAddress"] = original_mac
             for case, vlans, expected in (
                 ("wrong_b_and_missing_c", {"A": 101, "B": 999}, [("A", 101)]),
                 ("missing_c", {"A": 101, "B": 101}, [("A", 101), ("B", 101)]),
