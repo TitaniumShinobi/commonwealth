@@ -142,3 +142,74 @@ with tempfile.TemporaryDirectory() as directory:
     print(json.dumps({"scope": "synthetic signer, separate from authentic controller receipt",
                       "signed_and_verified": [admitted, renewed], "rejected": rejected,
                       "physical_adapter": "BLOCKED_AP_APPLIED_EVIDENCE"}))
+
+
+# Exercise the receipt checker with synthetic records. No device access occurs.
+from hashlib import sha256
+from check_receipts import DATASETS, digest, score
+
+site = uid(40)
+pin = "1" * 64
+controller_config = {**config, "site_id": site, "certificate_sha256": pin}
+bench_config = {"trunk": "eth0", "approval_ref": "synthetic", "stations": []}
+tagged_receipt = {"scope": "physical_bench_observation_only", "field_acceptance": "UNVERIFIED",
+                  "activation": "HELD", "trunk": {"interface": "eth0", "observed": True},
+                  "machine": "aarch64", "model": "Raspberry Pi 4 synthetic", "memory_kib": 8000000,
+                  "tagged_dataplane": "CORROBORATED", "received_tags": [],
+                  "blockers": ["controller/AP applied membership and field decision require independent review"]}
+for index, (role, group) in enumerate(zip("ABC", [groups[0], groups[0], groups[1]]), 1):
+    mac, ip, vlan = f"02:00:00:00:00:0{index}", f"192.0.2.{index}", group["vlan_id"]
+    client = uid(30 + index)
+    clients[client].update(macAddress=mac, ipAddress=ip)
+    bench_config["stations"].append({"role": role, "mac": mac, "source_ipv4": ip, "vlan": vlan, "client_id": client})
+    packet = (f"12:00:00.123456 {mac} > 02:00:00:00:00:ff, ethertype 802.1Q (0x8100), length 98: "
+              f"vlan {vlan}, p 0, ethertype IPv4 (0x0800), {ip} > 192.0.2.254: ICMP echo request")
+    tagged_receipt["received_tags"].append(
+        {"role": role, "mac": mac, "ipv4": ip, "vlan": vlan, "window_started": 110 + index,
+         "observed_at": 110.5 + index, "record": packet, "sha256": sha256(packet.encode()).hexdigest()})
+tagged_receipt["bench_config_sha256"] = digest(bench_config)
+observations, conflicts = evaluate(controller_config, networks, broadcasts, devices, clients)
+assert not conflicts
+controller_receipt = {"scope": "read_only_unifi_local_api", "guard_readback_issued": False,
+                      "configuration_consistent": True, "failures": [], "config_sha256": digest(controller_config),
+                      "started_at": 100, "finished_at": 110, "configuration_observations": observations}
+counts = dict(zip(DATASETS, [2, 2, 1, 3]))
+controller_receipt["inventory"] = {
+    name: {"total": total, "pages": [{"offset": 0, "count": total, "total": total}]}
+    for name, total in counts.items()}
+paths = [f"/sites/{site}/{name}?offset=0&limit=100" for name in DATASETS]
+paths.extend(f"/sites/{site}/clients/{uid(i)}" for i in (31, 32, 33))
+controller_receipt["requests"] = [{"path": path, "status": 200, "certificate_sha256": pin} for path in paths]
+controller_hash = digest(controller_receipt)
+tagged_receipt["controller_receipt_sha256"] = controller_hash
+
+bad_packet = deepcopy(tagged_receipt)
+row = bad_packet["received_tags"][0]
+row["record"] = row["record"].replace("vlan 101,", "vlan 999,")
+row["sha256"] = sha256(row["record"].encode()).hexdigest()
+
+bad_pages = deepcopy(controller_receipt)
+bad_pages["inventory"]["networks"]["pages"][0]["count"] = 1
+
+stale = deepcopy(tagged_receipt)
+for row in stale["received_tags"]:
+    row["window_started"] += 40
+    row["observed_at"] += 40
+
+receipt_cases = [
+    ("both_consistent", controller_receipt, tagged_receipt, ("PASS", "PASS", "PASS")),
+    ("missing_inventory", {}, tagged_receipt, ("UNVERIFIED", "PASS", "UNVERIFIED")),
+    ("incomplete_pagination", bad_pages, tagged_receipt, ("UNVERIFIED", "PASS", "UNVERIFIED")),
+    ("missing_tags", controller_receipt, {}, ("PASS", "UNVERIFIED", "UNVERIFIED")),
+    ("wrong_tag_with_matching_checksum", controller_receipt, bad_packet, ("PASS", "UNVERIFIED", "UNVERIFIED")),
+    ("other_controller_receipt", controller_receipt,
+     {**tagged_receipt, "controller_receipt_sha256": "0" * 64}, ("PASS", "PASS", "UNVERIFIED")),
+    ("outside_controller_window", controller_receipt, stale, ("PASS", "PASS", "UNVERIFIED")),
+]
+reports = {}
+for name, controller_case, bench_case, expected in receipt_cases:
+    report = score(controller_config, bench_config, controller_case, controller_hash, bench_case, 200)
+    assert tuple(report[key]["verdict"] for key in ("controller_inventory", "tagged_dataplane", "correlation")) == expected, report
+    assert report["signed_admission"] == "HELD"
+    reports[name] = report
+print(json.dumps({"scope": "synthetic offline receipt checks", "receipt_checks": reports}))

@@ -34,6 +34,7 @@ class Controller:
         self.config = config
         self.key = key
         self.requests = []
+        self.inventory = {}
         host = config["tls_name"]
         address = ipaddress.ip_address(config["address"])
         if not any(address in network for network in LOCAL) or not re.fullmatch(r"[A-Za-z0-9.:-]+", host):
@@ -77,6 +78,7 @@ class Controller:
     def complete(self, path):
         values = []
         total = None
+        pages = []
         for _ in range(20):
             page = self.get(f"{path}?offset={len(values)}&limit=100")
             data = page["data"]
@@ -85,6 +87,7 @@ class Controller:
                     or total is not None and total != page["totalCount"]):
                 raise ValueError("inconsistent pagination")
             total = page["totalCount"]
+            pages.append({"offset": len(values), "count": len(data), "total": total})
             values.extend(data)
             if len(values) == total:
                 break
@@ -95,6 +98,7 @@ class Controller:
         ids = [identifier(row["id"]) for row in values]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate inventory identifiers")
+        self.inventory[path.rsplit('/sites/', 1)[-1].split('/', 1)[-1]] = {"total": total, "pages": pages}
         return dict(zip(ids, values))
 
 
@@ -196,6 +200,7 @@ def main():
         receipt["blocker"] = str(exc)
     finally:
         receipt["requests"] = controller.requests if controller else []
+        receipt["inventory"] = controller.inventory if controller else {}
         receipt["finished_at"] = int(time.time())
         args.out.write_text(json.dumps(receipt, indent=2) + "\n")
     # A collector receipt is never an authorization or guard admission envelope.

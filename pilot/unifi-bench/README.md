@@ -50,3 +50,24 @@ pairing, but cannot establish which secret or AP policy authorized it. A support
 independently authenticated applied-state source covering those facts is required
 before the operator CLI can issue a trusted guard envelope. Review that source and
 the physical bench receipts before any separately authorized field test.
+
+## Score the observation receipts
+
+After capture, run the offline checker from the staged repository root. Supply the
+same two input files used during collection.
+
+```bash
+python3 pilot/unifi-bench/check_receipts.py \
+  "$CONTROLLER_JSON" "$BENCH_JSON" \
+  "$WORK/u7-lite-receipts/controller-readback.json" \
+  "$WORK/u7-lite-receipts/tagged-bench.json"
+```
+
+The command scores controller inventory, tagged dataplane, and their correlation
+separately. It returns 0 when all three observation checks pass and 2 when any
+is unverified. Receipts created before the pagination and bench-configuration
+bindings were added require fresh collection to satisfy those checks. The checker
+validates recorded consistency and does not authenticate file authorship, prove
+AP-applied credential membership, or accept a self-attestation as field evidence.
+Signed admission is always **HELD**. The checker does not access the controller,
+read secrets, or change forwarding.

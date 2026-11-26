@@ -11,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 
+from readback import digest
+
 
 def main():
     p = argparse.ArgumentParser()
@@ -22,6 +24,7 @@ def main():
     result = {"scope": "physical_bench_observation_only", "field_acceptance": "UNVERIFIED",
               "activation": "HELD", "received_tags": [], "blockers": []}
     config = json.loads(args.configuration.read_text())
+    result["bench_config_sha256"] = digest(config)
     model = Path("/proc/device-tree/model")
     result["machine"] = platform.machine()
     result["model"] = model.read_text(errors="replace").rstrip("\x00") if model.exists() else None
