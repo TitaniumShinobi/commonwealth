@@ -199,6 +199,66 @@ for name, controller_case, bench_case, expected in receipt_cases:
     reports[name] = report
 print(json.dumps({"scope": "synthetic offline receipt checks", "receipt_checks": reports}))
 
+def complete_tagged_flow(root, controller_path, secret_path):
+    import os
+    import socket
+    import struct
+
+    for command in (("link", "add", "cwtag-tx", "type", "veth", "peer", "name", "cwtag-rx"),
+                    ("link", "set", "cwtag-tx", "up"), ("link", "set", "cwtag-rx", "up")):
+        subprocess.run(["ip", *command], check=True, timeout=5)
+    config_path = root / "isolated-bench.json"
+    config_path.write_text(json.dumps({**bench_config, "trunk": "cwtag-rx"}))
+    secret_path.write_text("synthetic-fixture-only")
+    output = root / "full-tagged"
+    stop = threading.Event()
+
+    def traffic():
+        with socket.socket(socket.AF_PACKET, socket.SOCK_RAW) as wire:
+            wire.bind(("cwtag-tx", 0))
+            while not stop.is_set():
+                for row in bench_config["stations"]:
+                    mac = bytes.fromhex(row["mac"].replace(":", ""))
+                    ethernet = b"\xff" * 6 + mac + struct.pack("!HHH", 0x8100, row["vlan"], 0x0800)
+                    ipv4 = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 28, 0, 0, 64, 17, 0,
+                                       socket.inet_aton(row["source_ipv4"]), socket.inet_aton("192.0.2.254"))
+                    words = struct.unpack("!10H", ipv4)
+                    checksum = sum(words)
+                    while checksum >> 16:
+                        checksum = (checksum & 0xffff) + (checksum >> 16)
+                    ipv4 = ipv4[:10] + struct.pack("!H", checksum ^ 0xffff) + ipv4[12:]
+                    wire.send(ethernet + ipv4 + struct.pack("!HHHH", 9001, 9002, 8, 0))
+                stop.wait(0.05)
+
+    sender = threading.Thread(target=traffic)
+    sender.start()
+    try:
+        execution = subprocess.run(["bash", Path(__file__).with_name("operator.sh"),
+                                    controller_path, secret_path, config_path, output],
+                                   env={**os.environ, "CW_U7_TAGGED_FIXTURE": "1"},
+                                   capture_output=True, text=True, timeout=55)
+    finally:
+        stop.set()
+        sender.join()
+    assert execution.returncode == 2, execution.stderr
+    result = json.loads((output / "receipt-score.json").read_text())
+    assert all(result[name]["verdict"] == "PASS" for name in
+               ("controller_inventory", "tagged_dataplane", "correlation")), (result, execution.stderr)
+    assert result["signed_admission"] == "HELD"
+    capture = json.loads((output / "tagged-bench.json").read_text())
+    tags = capture["received_tags"]
+    assert [(row["role"], row["vlan"]) for row in tags] == [("A", 101), ("B", 101), ("C", 102)]
+    assert all(row["record"] for row in tags)
+    print(json.dumps({"scope": "synthetic isolated kernel veth and TLS controller",
+                      "full_operator_flow": result, "exit": execution.returncode,
+                      "packets": tags}, sort_keys=True))
+
+
+import sys
+isolated_mode = sys.argv[1:] == ["--isolated-tagged-flow"]
+if isolated_mode:
+    subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=5)
+
 with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("127.0.0.1", 0), Endpoint) as server:
     root = Path(path)
     cert, key = root / "cert", root / "key"
@@ -229,6 +289,9 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
         bench_path.write_text(json.dumps({**bench_config, "trunk": "lo"}))
         secret_path = root / "api-key"
         secret_path.touch(mode=0o600)
+        if isolated_mode:
+            complete_tagged_flow(root, controller_path, secret_path)
+            raise SystemExit(0)
         reports = {}
         for name, credential, configuration, expected_inventory, has_capture in (
             ("capture_incomplete", "synthetic-fixture-only", bench_path, "PASS", True),
@@ -258,3 +321,12 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
     finally:
         server.shutdown()
         thread.join()
+
+if not isolated_mode:
+    import shutil
+
+    if not shutil.which("tcpdump"):
+        subprocess.run(["sudo", "-n", "apt-get", "install", "-y", "-qq", "tcpdump"],
+                       check=True, timeout=90)
+    subprocess.run(["sudo", "-n", "unshare", "--net", sys.executable, __file__, "--isolated-tagged-flow"],
+                   check=True, timeout=75)

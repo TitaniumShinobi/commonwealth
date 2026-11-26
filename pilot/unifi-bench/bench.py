@@ -25,12 +25,15 @@ def main():
               "activation": "HELD", "received_tags": [], "blockers": []}
     config = json.loads(args.configuration.read_text())
     result["bench_config_sha256"] = digest(config)
+    fixture = os.environ.get("CW_U7_TAGGED_FIXTURE") == "1"
+    if fixture:
+        result["scope"] = "synthetic_namespace_bench_observation"
     model = Path("/proc/device-tree/model")
     result["machine"] = platform.machine()
     result["model"] = model.read_text(errors="replace").rstrip("\x00") if model.exists() else None
     with open("/proc/meminfo") as meminfo:
         result["memory_kib"] = int(next(line for line in meminfo if line.startswith("MemTotal:")).split()[1])
-    if (result["machine"] != "aarch64" or not (result["model"] or "").startswith("Raspberry Pi 4")
+    if not fixture and (result["machine"] != "aarch64" or not (result["model"] or "").startswith("Raspberry Pi 4")
             or not 7 * 1024 * 1024 <= result["memory_kib"] <= 8 * 1024 * 1024):
         result["blockers"].append("8GB Pi 4 native ARM64 hardware not demonstrated")
     try:
@@ -39,6 +42,14 @@ def main():
             raise ValueError("invalid trunk interface")
         topology = subprocess.run(["ip", "-j", "-d", "link", "show", "dev", iface], check=True, timeout=4,
                                   capture_output=True, text=True)
+        if fixture:
+            interfaces = json.loads(subprocess.check_output(["ip", "-j", "-d", "link", "show"], timeout=4))
+            kinds = {link["ifname"]: link.get("linkinfo", {}).get("info_kind") for link in interfaces}
+            if (os.stat("/proc/self/ns/net").st_ino == os.stat("/proc/1/ns/net").st_ino
+                    or iface != "cwtag-rx" or kinds != {"lo": None, "cwtag-tx": "veth", "cwtag-rx": "veth"}
+                    or any(subprocess.check_output(["ip", version, "route", "show", "default"], timeout=4)
+                           for version in ("-4", "-6"))):
+                raise ValueError("synthetic capture requires the isolated fixture namespace with no default route")
         result["trunk"] = {"interface": iface, "observed": bool(json.loads(topology.stdout))}
         if args.capture_tags:
             if result["blockers"]:

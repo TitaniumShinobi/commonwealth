@@ -96,12 +96,14 @@ def inventory(config, receipt):
 def tagged(config, receipt, now):
     roles = bench_stations(config)
     trunk = config["trunk"]
-    require(trunk != "lo" and receipt["scope"] == "physical_bench_observation_only"
+    physical = (receipt["scope"] == "physical_bench_observation_only"
+                and receipt["machine"] == "aarch64" and (receipt["model"] or "").startswith("Raspberry Pi 4")
+                and 7 * 1024 * 1024 <= receipt["memory_kib"] <= 8 * 1024 * 1024)
+    synthetic = receipt["scope"] == "synthetic_namespace_bench_observation" and trunk == "cwtag-rx"
+    require(trunk != "lo" and (physical or synthetic)
             and receipt["bench_config_sha256"] == digest(config)
             and receipt["field_acceptance"] == "UNVERIFIED" and receipt["activation"] == "HELD"
             and receipt["trunk"] == {"interface": trunk, "observed": True}
-            and receipt["machine"] == "aarch64" and receipt["model"].startswith("Raspberry Pi 4")
-            and 7 * 1024 * 1024 <= receipt["memory_kib"] <= 8 * 1024 * 1024
             and config["approval_ref"] not in ("", "REQUIRED") and receipt["tagged_dataplane"] == "CORROBORATED"
             and receipt["blockers"] == ["controller/AP applied membership and field decision require independent review"],
             "bench topology, configuration, or capture status unverified")
@@ -135,6 +137,8 @@ def score(controller_config, bench_config, controller, controller_sha256, bench,
         try:
             data[gate] = operation()
             report[gate] = {"verdict": "PASS"}
+            if gate == "tagged_dataplane":
+                report[gate]["evidence_scope"] = bench["scope"]
         except (KeyError, AttributeError, TypeError, ValueError, IndexError) as exc:
             report[gate] = {"verdict": "UNVERIFIED", "reason": str(exc)}
     try:

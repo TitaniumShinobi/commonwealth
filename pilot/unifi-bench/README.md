@@ -74,3 +74,8 @@ validates recorded consistency and does not authenticate file authorship, prove
 AP-applied credential membership, or accept a self-attestation as field evidence.
 Signed admission is always **HELD**. The checker does not access the controller,
 read secrets, or change forwarding.
+
+The Actions bench also runs the operator entry point in a disconnected Linux
+namespace against a synthetic TLS inventory and real tagged Ethernet frames.
+Those receipts use the scope `synthetic_namespace_bench_observation`. They
+exercise capture and scoring end to end and keep signed admission **HELD**.
