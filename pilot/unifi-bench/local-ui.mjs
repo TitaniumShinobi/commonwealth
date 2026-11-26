@@ -74,15 +74,15 @@ try {
   if(!await click(/^(Create New API Key|Create API Key|Generate API Key|New API Key)$/i))throw Error('supported Integrations API key control not reached');
   await page.waitForTimeout(500);
   await snapshot('key form');
-  await fill('[role=dialog] input[type=text],[role=dialog] input:not([type])','Commonwealth disposable fixture');
-  await click(/^(Create|Generate|Create New API Key|Create API Key|Generate API Key)$/i);
+  await page.locator('input[name=keyName]').fill('Commonwealth disposable fixture');
+  if(!await click(/^Create$/i))throw Error('fixture key submit unavailable');
   await page.waitForTimeout(750);
   // Look only in form controls explicitly marked as API key or in the new-key dialog.
   const key=await page.evaluate(()=>{
     const fields=[...document.querySelectorAll('input,textarea')];
     const candidates=fields.filter(e=>e.readOnly||/api.?key/i.test(e.name+' '+e.placeholder))
       .map(e=>e.value);
-    const dialog=document.querySelector('[role=dialog]');
+    const dialog=document.querySelector('[role=dialog]')||document.querySelector('[aria-modal=true]');
     if(dialog)for(const e of dialog.querySelectorAll('code,pre'))candidates.push(e.textContent.trim());
     return candidates.find(v=>/^[A-Za-z0-9_+\-=/]{24,256}$/.test(v))||null;
   });
