@@ -86,9 +86,12 @@ guard_process() {
   sudo -n grep -F "/$slice/" "/proc/$pid/cgroup"
   local controller_uid container_pid
   controller_uid=$(id -u uosserver)
-  sudo -n nsenter --net="/run/netns/$ns" -- runuser -u uosserver -- \
-    env XDG_RUNTIME_DIR="/run/user/$controller_uid" podman inspect uosserver \
-    --format "{{.State.Pid}}" > "$out/controller-container.pid"
+  (
+    cd /
+    sudo -n nsenter --net="/run/netns/$ns" -- runuser -u uosserver -- \
+      env XDG_RUNTIME_DIR="/run/user/$controller_uid" podman inspect uosserver \
+      --format "{{.State.Pid}}"
+  ) > "$out/controller-container.pid"
   container_pid=$(cat "$out/controller-container.pid")
   test "$container_pid" -gt 1
   sudo -n grep -F "/$slice/" "/proc/$container_pid/cgroup"
