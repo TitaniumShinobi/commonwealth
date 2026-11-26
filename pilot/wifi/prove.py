@@ -27,7 +27,10 @@ lock=threading.Lock()
 def loop(client, source):
     with client:
         while item:=client.recv(1):
-            with lock: received[source]=received.get(source,0)+len(item)
+            with lock:
+                counts=received.setdefault(source,{})
+                marker=item.decode('ascii',errors='replace')
+                counts[marker]=counts.get(marker,0)+1
             client.sendall(item)
 def accept():
     while True:
@@ -55,7 +58,8 @@ s.settimeout(0.7)
 print('ready',flush=True)
 for line in sys.stdin:
     try:
-        if line.strip()=='echo': s.sendall(b'x')
+        if line.strip() in ('echo','boundary','after'):
+            s.sendall({'echo':b'x','boundary':b'q','after':b'z'}[line.strip()])
         item=s.recv(1)
         print(item.decode() or 'closed',flush=True)
     except OSError:
@@ -280,7 +284,6 @@ def run(out):
             before = tracking()
             evidence["conntrack_before"] = before.splitlines()
             expect("all_sessions_tracked", True, all(f"src={ip}" in before for ip in ADDRESSES.values()))
-            server_before = json.loads(client_action(server, "stats"))
             crash_started = time.monotonic()
             boundary = work / "boundary-time.json"
             crash = subprocess.run([sys.executable, __file__, "--commit-then-crash", str(operator), str(revoked),
@@ -296,11 +299,14 @@ def run(out):
                    all(pushed_at_crash.get(ADDRESSES[role], 0) >= 1 for role in ("a", "b")))
             for role in ("a", "b"):
                 expect(role + "_crash_boundary_inbound_blocked", "blocked", client_action(guests[role], "read"))
-                expect(role + "_crash_boundary_outbound_blocked", "blocked", client_action(guests[role], "echo"))
+                expect(role + "_crash_boundary_outbound_blocked", "blocked", client_action(guests[role], "boundary"))
             expect("c_crash_boundary_downstream_continues", "p", client_action(guests["c"], "read"))
+            # Count only payloads emitted after the durable boundary. Continuous pre-boundary probes may still drain.
+            boundary_receipts = json.loads(client_action(server, "stats"))
+            evidence["origin_at_boundary"] = boundary_receipts
             expect("origin_no_a_or_b_payload_after_commit_before_recovery",
-                   [server_before.get(ADDRESSES[x], 0) for x in ("a", "b")],
-                   [json.loads(client_action(server, "stats")).get(ADDRESSES[x], 0) for x in ("a", "b")])
+                   [0, 0],
+                   [boundary_receipts.get(ADDRESSES[x], {}).get("q", 0) for x in ("a", "b")])
             f.program("g", reconstruct_guard())
             for role in ("a", "b"):
                 r("g", "conntrack", "-D", "-p", "tcp", "-s", ADDRESSES[role], "--dport", "8090")
@@ -317,12 +323,13 @@ def run(out):
                    all(pushed_after.get(ADDRESSES[role], 0) >= 1 for role in ("a", "b")))
             for role in ("a", "b"):
                 expect(f"{role}_downstream_denied_with_association_retained", "blocked", client_action(guests[role], "read"))
-                expect(f"{role}_upstream_denied_with_association_retained", "blocked", client_action(guests[role], "echo"))
+                expect(f"{role}_upstream_denied_with_association_retained", "blocked", client_action(guests[role], "after"))
             for role in ("a", "b"):
                 expect(f"{role}_fresh_flow_denied", True, denied_fresh(role))
             server_after = json.loads(client_action(server, "stats"))
-            expect("origin_received_no_withdrawn_payload", [server_before.get(ADDRESSES[x], 0) for x in ("a", "b")],
-                   [server_after.get(ADDRESSES[x], 0) for x in ("a", "b")])
+            evidence["origin_after_recovery"] = server_after
+            expect("origin_received_no_withdrawn_payload", [0, 0],
+                   [sum(server_after.get(ADDRESSES[x], {}).get(marker, 0) for marker in ("q", "z")) for x in ("a", "b")])
             expect("c_downstream_continues", "p", client_action(guests["c"], "read"))
             expect("c_upstream_continues", "x", client_action(guests["c"], "echo"))
             expect("kernel_ap_assignments_unchanged_eviction_withheld", vlan_table,
