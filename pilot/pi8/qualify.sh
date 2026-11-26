@@ -84,6 +84,14 @@ guard_process() {
   pid=$(systemctl show -p MainPID --value "$unit")
   test "$pid" -gt 1
   sudo -n grep -F "/$slice/" "/proc/$pid/cgroup"
+  local controller_uid container_pid
+  controller_uid=$(id -u uosserver)
+  sudo -n nsenter --net="/run/netns/$ns" -- runuser -u uosserver -- \
+    env XDG_RUNTIME_DIR="/run/user/$controller_uid" podman inspect uosserver \
+    --format "{{.State.Pid}}" > "$out/controller-container.pid"
+  container_pid=$(cat "$out/controller-container.pid")
+  test "$container_pid" -gt 1
+  sudo -n grep -F "/$slice/" "/proc/$container_pid/cgroup"
   test "$(sudo -n readlink "/proc/$pid/ns/net")" = "$(sudo -n ip netns exec "$ns" readlink /proc/self/ns/net)"
 }
 sample installed
@@ -107,7 +115,7 @@ guard_process
 sample restarted
 sudo -n systemd-run --wait --pipe --collect --unit=cwpi-wired --slice="$slice" \
   --uid="$(id -u)" --gid="$(id -g)" --working-directory="$root" --setenv="GITHUB_SHA=$GITHUB_SHA" \
-  bash "$root/pilot/activation/prove.sh" "$out/wired" > "$out/wired-run.log" 2>&1 &
+  bash -c 'cat /proc/self/cgroup; exec bash "$1" "$2"' _ "$root/pilot/activation/prove.sh" "$out/wired" > "$out/wired-run.log" 2>&1 &
 wired_pid=$!
 healthy=0
 while kill -0 "$wired_pid" 2>/dev/null; do
@@ -123,8 +131,10 @@ while kill -0 "$wired_pid" 2>/dev/null; do
 done
 wait "$wired_pid"
 tail -n 45 "$out/wired-run.log"
+grep -F "/$slice/" "$out/wired-run.log"
 grep -F 'exact approved baseline cannot bypass durable withdrawal' "$out/wired/trace.txt"
 test "$healthy" -ge 2
 sample completed
 test "$(awk '$1=="oom_kill" {print $2}' "/sys/fs/cgroup/$slice/memory.events")" -eq 0
+tail -n 14 "$out/resources.txt"
 record "PASS: isolated controller responded to $healthy overlapping health observations"

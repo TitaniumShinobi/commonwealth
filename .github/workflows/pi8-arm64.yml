@@ -65,6 +65,7 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/uos-installer"
       - name: Preserve qualification evidence
+        id: qualified_archive
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -72,3 +73,33 @@ jobs:
           path: ${{ runner.temp }}/pi8-evidence
           if-no-files-found: error
           retention-days: 14
+
+      - name: Re-read and verify qualification archive
+        if: always() && steps.qualified_archive.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.qualified_archive.outputs.artifact-id }}
+          ARTIFACT_SHA: ${{ steps.qualified_archive.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..6}; do
+            if curl --fail --silent --show-error --location --max-time 10 \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+                -o "$RUNNER_TEMP/pi8.zip"; then break; fi
+            if [[ "$attempt" == 6 ]]; then exit 2; fi
+            sleep 2
+          done
+          echo "${ARTIFACT_SHA#sha256:}  $RUNNER_TEMP/pi8.zip" | sha256sum --check
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          with zipfile.ZipFile(root / "pi8.zip") as archive:
+              members = [name for name in archive.namelist() if not name.endswith("/")]
+              for name in members:
+                  if archive.read(name) != (root / "pi8-evidence" / name).read_bytes():
+                      raise SystemExit("archive member changed: " + name)
+          print(json.dumps({"custody": "verified", "artifact": os.environ["ARTIFACT_ID"],
+                            "sha256": os.environ["ARTIFACT_SHA"], "members": len(members)}))
+          PY
