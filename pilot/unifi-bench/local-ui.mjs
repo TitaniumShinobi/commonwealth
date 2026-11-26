@@ -1,3 +1,5 @@
+import {connect} from 'node:tls';
+import {request} from 'node:https';
 import {createRequire} from 'node:module';
 import {randomBytes, createHash} from 'node:crypto';
 import {writeFile} from 'node:fs/promises';
@@ -77,33 +79,75 @@ try {
   await page.locator('input[name=keyName]').fill('Commonwealth disposable fixture');
   if(!await click(/^Create$/i))throw Error('fixture key submit unavailable');
   await page.waitForTimeout(750);
-  // Look only in form controls explicitly marked as API key or in the new-key dialog.
-  const key=await page.evaluate(()=>{
-    const fields=[...document.querySelectorAll('input,textarea')];
-    const candidates=fields.filter(e=>e.readOnly||/api.?key/i.test(e.name+' '+e.placeholder))
-      .map(e=>e.value);
-    const dialog=document.querySelector('[role=dialog]')||document.querySelector('[aria-modal=true]');
-    if(dialog)for(const e of dialog.querySelectorAll('code,pre'))candidates.push(e.textContent.trim());
-    return candidates.find(v=>/^[A-Za-z0-9_+\-=/]{24,256}$/.test(v))||null;
+  await page.getByRole('heading',{name:'API Key Created'}).waitFor({timeout:8000});
+  let key=await page.evaluate(()=>{
+    const fields=[...document.querySelectorAll('input,textarea')].filter(e=>e.getClientRects().length);
+    return fields.map(e=>e.value).find(v=>/^[A-Za-z0-9_+\-=/]{24,256}$/.test(v))||null;
   });
-  if(!key)await snapshot('key result controls only');
-  if(!key)throw Error('no API key obtained from supported UI controls');
+  if(!key){
+    await context.grantPermissions(['clipboard-read','clipboard-write'],{origin:base});
+    const copy=page.locator('button[title*="copy" i],button[aria-label*="copy" i]').or(page.getByRole('button',{name:/^copy(?: api key)?$/i})).first();
+    if(await copy.isVisible()){
+      await copy.click();
+      key=await page.evaluate(()=>navigator.clipboard.readText());
+    }
+  }
+  if(!key||key.length<24||key.length>256)throw Error('one-time key unavailable in supported UI');
   receipt.fixture_key_provisioned=true;
+  const host='127.0.0.1',port=11443;
+  const fingerprint=socket=>createHash('sha256').update(socket.getPeerCertificate().raw).digest('hex');
+  // Bootstrap trust from the isolated loopback controller, then pin before sending any HTTP bytes.
+  const pin=await new Promise((resolve,reject)=>{
+    const socket=connect({host,port,rejectUnauthorized:false},()=>{
+      try{resolve(fingerprint(socket));}catch(error){reject(error);}finally{socket.destroy();}
+    });
+    socket.on('error',reject);
+    socket.setTimeout(5000,()=>socket.destroy(Error('fixture TLS timeout')));
+  });
+  receipt.transport={trust:'isolated loopback certificate pin',certificate_sha256:pin,cookies:false};
+  const probe=(route,credential)=>new Promise((resolve,reject)=>{
+    const headers={Accept:'application/json'};
+    if(credential)headers['X-API-Key']=credential;
+    const req=request({host,port,path:route,headers,agent:false,rejectUnauthorized:false},res=>{
+      const chunks=[];
+      let size=0;
+      res.on('data',chunk=>{
+        size+=chunk.length;
+        if(size>262144){req.destroy(Error('fixture response exceeded byte limit'));return;}
+        chunks.push(chunk);
+      });
+      res.on('error',reject);
+      res.on('end',()=>{
+        const bytes=Buffer.concat(chunks);
+        let body;
+        try{body=JSON.parse(bytes.toString('utf8'));}catch{}
+        const paginated=Boolean(Array.isArray(body?.data)&&body.count===body.data.length&&
+          ['count','totalCount','offset','limit'].every(k=>Number.isInteger(body[k])));
+        resolve({status:res.statusCode,media:res.headers['content-type']||'',paginated,
+          count:paginated?body.totalCount:null,body_sha256:createHash('sha256').update(bytes).digest('hex')});
+      });
+    });
+    req.on('error',reject);
+    req.setTimeout(6000,()=>req.destroy(Error('fixture HTTP timeout')));
+    req.on('socket',socket=>socket.once('secureConnect',()=>{
+      try{
+        if(fingerprint(socket)!==pin)throw Error('controller certificate pin mismatch');
+        req.end();
+      }catch(error){req.destroy(error);}
+    }));
+  });
   receipt.probes=[];
   for(const route of ['/proxy/network/integration/v1/sites','/integration/v1/sites']){
-    const result=await context.request.get(base+route,{headers:{Accept:'application/json','X-API-Key':key},maxRedirects:0,timeout:6000});
-    const bytes=await result.body();
-    let body;
-    try {body=JSON.parse(bytes.toString('utf8'));}catch{}
-    const signedShape=Boolean(body&&Array.isArray(body.data)&&Number.isInteger(body.totalCount));
-    const media=result.headers()['content-type']||'';
-    const negative=await context.request.get(base+route,{headers:{Accept:'application/json','X-API-Key':'invalid-fixture-key'},maxRedirects:0,timeout:6000});
-    const negativeJson=await negative.json().catch(()=>null);
-    const accepted=result.status()===200 && media.startsWith('application/json')&&signedShape &&
-      !(negative.status()===200&&Array.isArray(negativeJson?.data));
-    receipt.probes.push({route,status:result.status(),media,paginated_sites:signedShape,
-      invalid_key_status:negative.status(),body_sha256:createHash('sha256').update(bytes).digest('hex')});
-    if(accepted){receipt.authenticated_json=true;receipt.documented_route=route;break;}
+    const missing=await probe(route);
+    const wrong=await probe(route,'invalid-fixture-key');
+    const valid=await probe(route,key);
+    receipt.probes.push({route,valid,missing,wrong});
+    if(valid.status===200&&valid.media.startsWith('application/json')&&valid.paginated&&
+      [missing,wrong].every(result=>[401,403].includes(result.status)&&!result.paginated)){
+      receipt.authenticated_json=true;
+      receipt.documented_route=route;
+      break;
+    }
   }
   if(!receipt.authenticated_json)throw Error('fixture key did not produce authenticated sites JSON');
 } catch(error) {
