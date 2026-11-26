@@ -45,6 +45,8 @@ try {
     await page.waitForTimeout(650);
     await snapshot('supported UI step '+turn);
     if(await click(/^(Integrations|API Keys)$/i)) break;
+    const integration=page.locator('a[href="/network/default/integrations"]').first();
+    if(!page.url().includes('/integrations') && await integration.isVisible()){await integration.click();break;}
     const settings=page.locator('a[href*="/settings"],[aria-label="Settings" i],[title="Settings" i]').first();
     if(page.url().endsWith('/dashboard') && await settings.isVisible()){await settings.click();continue;}
     if(await click(/^(?:Continue Anyway|Go To Dashboard)$/i)) continue;
@@ -67,6 +69,7 @@ try {
     }
     if(await click(/^(Get Started|Start Setup|Continue|Next|Finish Setup|Set Up|Create Account|Create|Sign In|Finish|Confirm)$/i))continue;
   }
+  await page.waitForTimeout(2000);
   await snapshot('before fixture key creation');
   if(!await click(/^(Create API Key|Generate API Key|New API Key)$/i))throw Error('supported Integrations API key control not reached');
   await page.waitForTimeout(500);
