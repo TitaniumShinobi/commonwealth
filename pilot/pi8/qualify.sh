@@ -42,10 +42,12 @@ test "$(cat /sys/fs/cgroup/cwpi.slice/memory.max)" = "$limit"
 test "$(cat /sys/fs/cgroup/cwpi.slice/memory.swap.max)" = 0
 record "ARM64 aggregate slice hard memory limit=$limit; swap=0"
 test ! -e /usr/local/bin/uosserver
+sudo -n nsenter --net="/run/netns/$ns" -- stat -fc %T /sys/fs/cgroup | tee "$out/installer-cgroup-fs.txt"
+grep -qx cgroup2fs "$out/installer-cgroup-fs.txt"
 chmod 700 "$installer"
 set +e
 printf 'y\n' | sudo -n systemd-run --scope --slice="$slice" \
-  timeout 300s ip netns exec "$ns" "$installer" > "$out/install.log" 2>&1
+  timeout 300s nsenter --net="/run/netns/$ns" -- "$installer" > "$out/install.log" 2>&1
 install_status=$?
 set -e
 tail -n 60 "$out/install.log"
