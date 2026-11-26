@@ -44,18 +44,20 @@ try {
   for(let turn=0;turn<16;turn++){
     await page.waitForTimeout(650);
     await snapshot('supported UI step '+turn);
-    if(await click(/^(Network|UniFi Network)$/i)) continue;
+    if(await click(/^(Integrations|API Keys)$/i)) break;
+    if(await click(/^(Proceed Without a UI Account|Settings|Control Plane)$/i)) continue;
+    if(!page.url().includes("/network") && await click(/^(Network|UniFi Network)$/i)) continue;
     if(await click(/^(Integrations|API Keys)$/i)) break;
     if(await click(/^(Advanced Setup|Set Up Offline|Offline Setup|Local Setup|Create Local Account|Use Local Account|Continue Without (a )?UI Account)$/i)) continue;
     await fill('input[name*="name" i]:not([type=password]),input[placeholder*="server name" i]','Commonwealth Cloud Fixture');
     const local=await page.locator('input[type=password]').count();
     if(local){
       const text=await page.locator('body').innerText();
-      if(!/local|offline|sign in to your console/i.test(text)) throw Error('cloud sign-in only; local setup not exposed');
+      if(!/local|offline|sign in to your console/i.test(text) && !await page.locator('input[name*="local" i]').count()) throw Error('cloud sign-in only; local setup not exposed');
       for(const item of await page.locator('input[type=password]').all())if(await item.isVisible())await item.fill(password);
       await fill('input[autocomplete=username],input[name*="username" i],input[placeholder*="username" i]','cw-fixture-admin');
     }
-    if(await click(/^(Get Started|Start Setup|Continue|Next|Finish Setup|Set Up|Create Account|Sign In)$/i))continue;
+    if(await click(/^(Get Started|Start Setup|Continue|Next|Finish Setup|Set Up|Create Account|Create|Sign In|Finish|Confirm)$/i))continue;
   }
   await snapshot('before fixture key creation');
   if(!await click(/^(Create API Key|Generate API Key|New API Key)$/i))throw Error('supported Integrations API key control not reached');
