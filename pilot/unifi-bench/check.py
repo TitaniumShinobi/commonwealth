@@ -199,27 +199,35 @@ for name, controller_case, bench_case, expected in receipt_cases:
     reports[name] = report
 print(json.dumps({"scope": "synthetic offline receipt checks", "receipt_checks": reports}))
 
-def complete_tagged_flow(root, controller_path, secret_path):
+def setup_tagged_links():
+    for command in (("link", "add", "cwtag-tx", "type", "veth", "peer", "name", "cwtag-rx"),
+                    ("link", "set", "cwtag-tx", "up"), ("link", "set", "cwtag-rx", "up")):
+        subprocess.run(["ip", *command], check=True, timeout=5)
+
+
+
+def exercise_tagged_flow(root, controller_path, secret_path, case, sent_vlans, expected_tags):
     import os
     import socket
     import struct
 
-    for command in (("link", "add", "cwtag-tx", "type", "veth", "peer", "name", "cwtag-rx"),
-                    ("link", "set", "cwtag-tx", "up"), ("link", "set", "cwtag-rx", "up")):
-        subprocess.run(["ip", *command], check=True, timeout=5)
-    config_path = root / "isolated-bench.json"
+    config_path = root / f"{case}-bench.json"
     config_path.write_text(json.dumps({**bench_config, "trunk": "cwtag-rx"}))
     secret_path.write_text("synthetic-fixture-only")
-    output = root / "full-tagged"
+    output = root / case
     stop = threading.Event()
+    sent = {role: 0 for role in "ABC"}
 
     def traffic():
         with socket.socket(socket.AF_PACKET, socket.SOCK_RAW) as wire:
             wire.bind(("cwtag-tx", 0))
             while not stop.is_set():
                 for row in bench_config["stations"]:
+                    role = row["role"]
+                    if role not in sent_vlans:
+                        continue
                     mac = bytes.fromhex(row["mac"].replace(":", ""))
-                    ethernet = b"\xff" * 6 + mac + struct.pack("!HHH", 0x8100, row["vlan"], 0x0800)
+                    ethernet = b"\xff" * 6 + mac + struct.pack("!HHH", 0x8100, sent_vlans[role], 0x0800)
                     ipv4 = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 28, 0, 0, 64, 17, 0,
                                        socket.inet_aton(row["source_ipv4"]), socket.inet_aton("192.0.2.254"))
                     words = struct.unpack("!10H", ipv4)
@@ -228,11 +236,20 @@ def complete_tagged_flow(root, controller_path, secret_path):
                         checksum = (checksum & 0xffff) + (checksum >> 16)
                     ipv4 = ipv4[:10] + struct.pack("!H", checksum ^ 0xffff) + ipv4[12:]
                     wire.send(ethernet + ipv4 + struct.pack("!HHHH", 9001, 9002, 8, 0))
+                    sent[role] += 1
                 stop.wait(0.05)
 
     sender = threading.Thread(target=traffic)
     sender.start()
+    wrong_vlan_frame = None
     try:
+        if sent_vlans.get("B") == 999:
+            witness = subprocess.run(
+                ["tcpdump", "-Q", "in", "-nn", "-e", "-s", "96", "-c", "1", "-i", "cwtag-rx",
+                 "ether src 02:00:00:00:00:02 and vlan 999 and ip and src host 192.0.2.2"],
+                check=True, capture_output=True, text=True, timeout=5)
+            wrong_vlan_frame = witness.stdout.strip()
+            assert "vlan 999," in wrong_vlan_frame, wrong_vlan_frame
         execution = subprocess.run(["bash", Path(__file__).with_name("operator.sh"),
                                     controller_path, secret_path, config_path, output],
                                    env={**os.environ, "CW_U7_TAGGED_FIXTURE": "1"},
@@ -242,16 +259,24 @@ def complete_tagged_flow(root, controller_path, secret_path):
         sender.join()
     assert execution.returncode == 2, execution.stderr
     result = json.loads((output / "receipt-score.json").read_text())
-    assert all(result[name]["verdict"] == "PASS" for name in
-               ("controller_inventory", "tagged_dataplane", "correlation")), (result, execution.stderr)
+    complete = len(expected_tags) == 3
+    assert result["controller_inventory"]["verdict"] == "PASS", result
+    for name in ("tagged_dataplane", "correlation"):
+        assert result[name]["verdict"] == ("PASS" if complete else "UNVERIFIED"), (result, execution.stderr)
     assert result["signed_admission"] == "HELD"
     capture = json.loads((output / "tagged-bench.json").read_text())
     tags = capture["received_tags"]
-    assert [(row["role"], row["vlan"]) for row in tags] == [("A", 101), ("B", 101), ("C", 102)]
+    assert [(row["role"], row["vlan"]) for row in tags] == expected_tags, capture
     assert all(row["record"] for row in tags)
+    assert all((count > 0) == (role in sent_vlans) for role, count in sent.items()), sent
+    if not complete:
+        timed_out_role = "ABC"[len(expected_tags)]
+        assert f"Send separately approved IPv4 traffic from station {timed_out_role} now" in execution.stderr
+        assert any("timed out after 15 seconds" in blocker for blocker in capture["blockers"]), capture
     print(json.dumps({"scope": "synthetic isolated kernel veth and TLS controller",
-                      "full_operator_flow": result, "exit": execution.returncode,
-                      "packets": tags}, sort_keys=True))
+                      "case": case, "full_operator_flow": result, "exit": execution.returncode,
+                      "sent_frames": sent, "sent_vlans": sent_vlans, "wrong_vlan_witness": wrong_vlan_frame,
+                      "capture_blockers": capture["blockers"], "packets": tags}, sort_keys=True))
 
 
 import sys
@@ -290,7 +315,13 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
         secret_path = root / "api-key"
         secret_path.touch(mode=0o600)
         if isolated_mode:
-            complete_tagged_flow(root, controller_path, secret_path)
+            setup_tagged_links()
+            for case, vlans, expected in (
+                ("all_expected_tags", {"A": 101, "B": 101, "C": 102}, [("A", 101), ("B", 101), ("C", 102)]),
+                ("wrong_b_and_missing_c", {"A": 101, "B": 999}, [("A", 101)]),
+                ("missing_c", {"A": 101, "B": 101}, [("A", 101), ("B", 101)]),
+            ):
+                exercise_tagged_flow(root, controller_path, secret_path, case, vlans, expected)
             raise SystemExit(0)
         reports = {}
         for name, credential, configuration, expected_inventory, has_capture in (
