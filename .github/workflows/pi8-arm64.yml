@@ -1,0 +1,109 @@
+name: ARM64 8 GiB qualification
+on:
+  workflow_dispatch:
+  push:
+    branches: [wifi-withdrawal-review]
+    paths:
+      - .github/workflows/pi8-arm64.yml
+      - pilot/pi8/**
+      - pilot/wifi/**
+permissions:
+  contents: read
+  actions: read
+jobs:
+  pi8:
+    if: github.ref_name == 'wifi-withdrawal-review'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: ARM64 runner and isolation smoke
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pi8-evidence"
+          mkdir -p "$out"
+          {
+            git rev-parse HEAD
+            uname -a
+            dpkg --print-architecture
+            cat /etc/os-release
+            df -B1 / /tmp /home /var/tmp
+            free -b
+            test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+            test "$(uname -m)" = aarch64
+            test "$(dpkg --print-architecture)" = arm64
+            test -r /sys/fs/cgroup/cgroup.controllers
+            sudo -n unshare --net -- sh -ec 'ip link set lo up; test -z "$(ip route show default)"; ip -br link'
+          } | tee "$out/smoke.txt"
+      - name: Collect ARM64 installer provenance
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pi8-evidence"
+          wget -q --timeout=30 --tries=2 \
+            -O "$RUNNER_TEMP/uos-installer" \
+            'https://fw-download.ubnt.com/data/unifi-os-server/f730-linux-arm64-5.1.42-d2bca8bd-d6fc-4d20-99e5-b78235843c2f.42-arm64'
+          printf '%s  %s\n' '8e29bd50cde8f781ace4b85599256ef62c02723bdc751044d4db90a087fb5207' "$RUNNER_TEMP/uos-installer" | sha256sum --check
+          sha256sum "$RUNNER_TEMP/uos-installer" | tee "$out/installer.sha256"
+          stat -c '%s bytes' "$RUNNER_TEMP/uos-installer" | tee "$out/installer-size.txt"
+          file "$RUNNER_TEMP/uos-installer" | tee "$out/installer-type.txt"
+      - name: Stage supported Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo -n apt-get update -qq
+          sudo -n apt-get install -y -qq podman slirp4netns passt dnsmasq-base udhcpc conntrack nftables
+          podman --version
+          podman_version=$(podman --version | awk '{print $3}')
+          dpkg --compare-versions "$podman_version" ge 4.9.3
+          slirp4netns --version
+      - name: Attempt isolated controller and wired co-host qualification
+        run: |
+          set -euo pipefail
+          bash pilot/pi8/qualify.sh "$RUNNER_TEMP/uos-installer" "$RUNNER_TEMP/pi8-evidence"
+      - name: Verify ARM64 Wi-Fi policy and kernel withdrawal
+        run: |
+          PYTHONPATH="simulation:pilot/activation" python3 pilot/wifi/prove.py "$RUNNER_TEMP/pi8-evidence/wifi"
+      - name: Remove staged installer
+        if: always()
+        run: rm -f "$RUNNER_TEMP/uos-installer"
+      - name: Preserve qualification evidence
+        id: qualified_archive
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pi8-arm64-evidence
+          path: ${{ runner.temp }}/pi8-evidence
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Re-read and verify qualification archive
+        if: always() && steps.qualified_archive.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.qualified_archive.outputs.artifact-id }}
+          ARTIFACT_SHA: ${{ steps.qualified_archive.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..6}; do
+            if curl --fail --silent --show-error --location --max-time 10 \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+                -o "$RUNNER_TEMP/pi8.zip"; then break; fi
+            if [[ "$attempt" == 6 ]]; then exit 2; fi
+            sleep 2
+          done
+          echo "${ARTIFACT_SHA#sha256:}  $RUNNER_TEMP/pi8.zip" | sha256sum --check
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          with zipfile.ZipFile(root / "pi8.zip") as archive:
+              members = [name for name in archive.namelist() if not name.endswith("/")]
+              for name in members:
+                  if archive.read(name) != (root / "pi8-evidence" / name).read_bytes():
+                      raise SystemExit("archive member changed: " + name)
+          print(json.dumps({"custody": "verified", "artifact": os.environ["ARTIFACT_ID"],
+                            "sha256": os.environ["ARTIFACT_SHA"], "members": len(members)}))
+          PY

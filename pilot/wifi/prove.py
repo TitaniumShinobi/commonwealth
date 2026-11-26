@@ -11,6 +11,7 @@ from pathlib import Path
 
 from commonwealth_sim.namespace_pilot import Fixture
 from edge import encode, fingerprint, openssl
+from policy import withdraw_transaction
 
 TARGET = {"ap": "fixture-ap", "edge": "fixture-edge", "credential": "shared-guest", "generation": 7,
           "vlan": 101, "stations": ["A", "B"]}
@@ -273,17 +274,33 @@ def run(out):
                 expect(role + "_downstream_before_withdrawal", "p", client_action(guests[role], "read"))
             continuous = f.launch("c", CONTINUITY)
             expect("c_continuous_first_observation", "sampled", f.line(continuous))
+            revoked_continuity = {role: f.launch(role, CONTINUITY) for role in ("a", "b")}
+            for role, process in revoked_continuity.items():
+                expect(role + "_boundary_probe_live", "sampled", f.line(process))
             before = tracking()
             evidence["conntrack_before"] = before.splitlines()
             expect("all_sessions_tracked", True, all(f"src={ip}" in before for ip in ADDRESSES.values()))
             server_before = json.loads(client_action(server, "stats"))
             crash_started = time.monotonic()
-            crash = subprocess.run([sys.executable, __file__, "--commit-then-crash", str(operator), str(revoked)],
+            boundary = work / "boundary-time.json"
+            crash = subprocess.run([sys.executable, __file__, "--commit-then-crash", str(operator), str(revoked),
+                                    f.prefix + "g", str(boundary)],
                                    check=False, timeout=5)
             expect("crash_after_durable_commit", 77, crash.returncode)
-            expect("guard_not_installed_in_crashed_process", False,
+            expect("guard_installed_before_durable_commit", True,
                    'iifname "guest101" counter' in r("g", "nft", "list", "table", "inet", "wifi_guard"))
             evidence["signed_withdrawal"] = json.loads(revoked.read_text())
+            evidence["withdrawal_boundary"] = json.loads(boundary.read_text())
+            pushed_at_crash = json.loads(client_action(server, "push"))
+            expect("origin_wrote_to_both_old_sockets_at_crash_boundary", True,
+                   all(pushed_at_crash.get(ADDRESSES[role], 0) >= 1 for role in ("a", "b")))
+            for role in ("a", "b"):
+                expect(role + "_crash_boundary_inbound_blocked", "blocked", client_action(guests[role], "read"))
+                expect(role + "_crash_boundary_outbound_blocked", "blocked", client_action(guests[role], "echo"))
+            expect("c_crash_boundary_downstream_continues", "p", client_action(guests["c"], "read"))
+            expect("origin_no_a_or_b_payload_after_commit_before_recovery",
+                   [server_before.get(ADDRESSES[x], 0) for x in ("a", "b")],
+                   [json.loads(client_action(server, "stats")).get(ADDRESSES[x], 0) for x in ("a", "b")])
             f.program("g", reconstruct_guard())
             for role in ("a", "b"):
                 r("g", "conntrack", "-D", "-p", "tcp", "-s", ADDRESSES[role], "--dport", "8090")
@@ -337,6 +354,18 @@ def run(out):
             reverse = r("g", "conntrack", "-L", "-p", "tcp", "-s", "203.0.113.2", "--sport", "8090")
             expect("withdrawn_reverse_conntrack_not_recreated", False, any(
                 f"dst={ADDRESSES[role]}" in reverse for role in ("a", "b")))
+            evidence["withdrawn_probe_window"] = {}
+            for role, process in revoked_continuity.items():
+                process.stdin.write("stop\n")
+                process.stdin.flush()
+                observations = json.loads(f.line(process))
+                committed = evidence["withdrawal_boundary"]["withdrawal_synced_at"]
+                after = [entry for entry in observations if entry["started"] >= committed]
+                expect(role + "_fresh_duplex_probe_blocked_across_commit_and_rollback", True,
+                       observations[0]["fresh_echo"] and len(after) >= 3 and not any(row["fresh_echo"] for row in after))
+                evidence["withdrawn_probe_window"][role] = {
+                    "before_succeeded": sum(row["fresh_echo"] for row in observations if row["started"] < committed),
+                    "after_denied": len(after), "first_after": after[0], "last_after": after[-1]}
             live_tracking = tracking()
             evidence["conntrack_live_after_rollback"] = live_tracking.splitlines()
             expect("withdrawn_conntrack_not_recreated_during_live_rollback", [False, False, True],
@@ -375,6 +404,27 @@ def run(out):
             recovered_c = f.launch("c", CLIENT)
             expect("reboot_c_new_connection_ready", "ready", f.line(recovered_c))
             expect("reboot_c_new_echo", "x", client_action(recovered_c, "echo"))
+            service_target = {"edge": "fixture-edge", "ap": "fixture-ap", "credential": "shared-guest",
+                              "generation": 7, "vlan": 101, "interface": "guest101", "subnet": "10.77.101.0/24"}
+            configuration = work / "deployed-service.json"
+            configuration.write_text(json.dumps({**service_target, "state": str(work / "deployed-state"),
+                "operator_public": str(operator_public), "ap_public": str(ap_public),
+                "operator_key_sha256": fingerprint(operator_public), "ap_key_sha256": fingerprint(ap_public)}))
+            service = Path(__file__).with_name("policy.py")
+            def service_command(operation, *args, check=True):
+                return f.run("env", f"PYTHONPATH={service.resolve().parents[1] / 'activation'}",
+                             sys.executable, str(service), operation, str(configuration), *map(str, args),
+                             namespace=edge, check=check)
+            expect("deployed_service_boot_closed", "completed",
+                   json.loads(service_command("boot-closed").stdout)["result"])
+            signed = work / "service-withdraw.json"
+            signed.write_text(json.dumps(sign(operator, {**service_target, "intent": "withdraw"})))
+            expect("deployed_service_withdraw", "completed",
+                   json.loads(service_command("withdraw", "--approval", signed).stdout)["result"])
+            expect("deployed_service_rejects_post_withdrawal_challenge", True,
+                   service_command("challenge", check=False).returncode != 0)
+            expect("deployed_service_preserves_unrelated_traffic", "x", client_action(recovered_c, "echo"))
+            evidence["deployed_service_guard"] = r(edge, "nft", "list", "table", "inet", "cw_wifi_guard")
             ap_state.write_text(json.dumps({"future_admission": "denied", "vlan_credentials": [TARGET["credential"]]}))
             challenge = secrets.token_hex(16)
             future = ap_readback(challenge)
@@ -401,6 +451,8 @@ def run(out):
             for role in reversed(f.namespaces):
                 f.run("ip", "netns", "del", f.prefix + role, check=False)
             f.state.cleanup()
+            if (work / "deployed-state").exists():
+                f.run("chown", "-R", str(os.getuid()), str(work / "deployed-state"))
 
 
 if __name__ == "__main__":
@@ -408,9 +460,15 @@ if __name__ == "__main__":
         key, state, nonce = sys.argv[2:]
         print(json.dumps(sign(key, {**TARGET, **json.loads(Path(state).read_text()), "nonce": nonce})))
     elif sys.argv[1] == "--commit-then-crash":
-        key, target = map(Path, sys.argv[2:])
-        persist(target, sign(key, {**TARGET, "intent": "withdraw"}))
-        os._exit(77)
+        key, target, namespace, boundary = sys.argv[2:]
+        def deny():
+            subprocess.run(["sudo", "-n", "ip", "netns", "exec", namespace, "nft", "-f", "-"],
+                           input=guard(True), text=True, check=True, timeout=5)
+        def commit():
+            before = time.monotonic()
+            persist(Path(target), sign(Path(key), {**TARGET, "intent": "withdraw"}))
+            persist(Path(boundary), {"deny_ack_at": before, "withdrawal_synced_at": time.monotonic()})
+        withdraw_transaction(deny, commit, lambda: None, lambda: os._exit(77))
     elif sys.argv[1] == "--recover-guard":
         public, target = map(Path, sys.argv[2:])
         verify(public, json.loads(target.read_text()), {**TARGET, "intent": "withdraw"})
