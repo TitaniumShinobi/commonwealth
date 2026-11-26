@@ -65,6 +65,12 @@ sample() {
       printf '%s=' "$metric"
       cat "/sys/fs/cgroup/$slice/$metric"
     done
+    if [[ -n "$controller_cgroup" ]]; then
+      for metric in memory.current memory.peak memory.max memory.swap.current memory.events; do
+        printf "container.%s=" "$metric"
+        cat "$controller_cgroup/$metric"
+      done
+    fi
   } >> "$out/resources.txt"
 }
 probe() {
@@ -84,20 +90,49 @@ guard_process() {
   pid=$(systemctl show -p MainPID --value "$unit")
   test "$pid" -gt 1
   sudo -n grep -F "/$slice/" "/proc/$pid/cgroup"
-  local controller_uid container_pid
+  local controller_uid container_pid container_id actual prefix
   controller_uid=$(id -u uosserver)
   (
     cd /
     sudo -n nsenter --net="/run/netns/$ns" -- runuser -u uosserver -- \
       env HOME=/home/uosserver XDG_CONFIG_HOME=/home/uosserver/.config \
         XDG_RUNTIME_DIR="/run/user/$controller_uid" podman inspect uosserver \
-      --format "{{.State.Pid}}"
+      --format "{{.Id}} {{.State.Pid}}"
   ) > "$out/controller-container.pid"
-  container_pid=$(cat "$out/controller-container.pid")
+  read -r container_id container_pid < "$out/controller-container.pid"
   test "$container_pid" -gt 1
-  sudo -n grep -F "/$slice/" "/proc/$container_pid/cgroup"
+  actual=$(sudo -n awk -F: '$1=="0" {print $3}' "/proc/$container_pid/cgroup")
+  printf 'controller_container_cgroup=%s\n' "$actual"
+  controller_cgroup=
+  if [[ "$actual" == "/$slice/"* ]]; then
+    sudo -n systemctl set-property --runtime "$slice" MemoryMax="$limit" MemorySwapMax=0
+    return
+  fi
+  # Use the Podman container ancestor, including inner-systemd child cgroups.
+  prefix=$(python3 - "$actual" "$container_id" <<'PY'
+import sys
+path, identity = sys.argv[1:]
+parts = path.split("/")
+for i, segment in enumerate(parts):
+    if identity in segment:
+        print("/".join(parts[:i+1]))
+        break
+PY
+)
+  if [[ -z "$prefix" ]]; then
+    record 'UNVERIFIED: could not identify the rootless container ancestor'
+    return 2
+  fi
+  controller_cgroup="/sys/fs/cgroup$prefix"
+  sudo -n systemctl set-property --runtime "$slice" MemoryMax=2147483648 MemorySwapMax=0
+  printf '6442450944\n' | sudo -n tee "$controller_cgroup/memory.max" >/dev/null
+  printf '0\n' | sudo -n tee "$controller_cgroup/memory.swap.max" >/dev/null
+  test "$(cat "$controller_cgroup/memory.max")" = 6442450944
+  test "$(cat "/sys/fs/cgroup/$slice/memory.max")" = 2147483648
+  record 'Effective aggregate cap: 2 GiB service/wired slice + 6 GiB rootless container; swap=0'
   test "$(sudo -n readlink "/proc/$pid/ns/net")" = "$(sudo -n ip netns exec "$ns" readlink /proc/self/ns/net)"
 }
+controller_cgroup=
 sample installed
 sudo -n systemctl start "$unit"
 if ! wait_ready before; then
@@ -105,7 +140,8 @@ if ! wait_ready before; then
   record 'UNVERIFIED: isolated local controller health did not reach HTTP success'
   exit 2
 fi
-guard_process | tee "$out/controller-cgroup.txt"
+guard_process > "$out/controller-cgroup.txt"
+cat "$out/controller-cgroup.txt"
 sudo -n ip netns exec "$ns" ss -H -lntu > "$out/private-listeners.txt"
 sudo -n ss -H -lntu > "$out/host-during.txt"
 if awk '{print $5}' "$out/host-during.txt" | grep -Eq ':(9543|11443|28082|3478|5514|5671|6789|8080|8444|8880|8881|8882|11084|10003)$'; then
@@ -140,5 +176,8 @@ grep -F 'exact approved baseline cannot bypass durable withdrawal' "$out/wired/t
 test "$healthy" -ge 2
 sample completed
 test "$(awk '$1=="oom_kill" {print $2}' "/sys/fs/cgroup/$slice/memory.events")" -eq 0
-tail -n 14 "$out/resources.txt"
+if [[ -n "$controller_cgroup" ]]; then
+  test "$(awk '$1=="oom_kill" {print $2}' "$controller_cgroup/memory.events")" -eq 0
+fi
+tail -n 27 "$out/resources.txt"
 record "PASS: isolated controller responded to $healthy overlapping health observations"
