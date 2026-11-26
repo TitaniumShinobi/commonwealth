@@ -44,9 +44,26 @@ jobs:
           wget -q --timeout=30 --tries=2 \
             -O "$RUNNER_TEMP/uos-installer" \
             'https://fw-download.ubnt.com/data/unifi-os-server/f730-linux-arm64-5.1.42-d2bca8bd-d6fc-4d20-99e5-b78235843c2f.42-arm64'
+          printf '%s  %s\n' '8e29bd50cde8f781ace4b85599256ef62c02723bdc751044d4db90a087fb5207' "$RUNNER_TEMP/uos-installer" | sha256sum --check
           sha256sum "$RUNNER_TEMP/uos-installer" | tee "$out/installer.sha256"
           stat -c '%s bytes' "$RUNNER_TEMP/uos-installer" | tee "$out/installer-size.txt"
           file "$RUNNER_TEMP/uos-installer" | tee "$out/installer-type.txt"
+      - name: Stage supported Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo -n apt-get update -qq
+          sudo -n apt-get install -y -qq podman slirp4netns passt dnsmasq-base udhcpc conntrack nftables
+          podman --version
+          podman_version=$(podman --version | awk '{print $3}')
+          dpkg --compare-versions "$podman_version" ge 4.9.3
+          slirp4netns --version
+      - name: Attempt isolated controller and wired co-host qualification
+        run: |
+          set -euo pipefail
+          bash pilot/pi8/qualify.sh "$RUNNER_TEMP/uos-installer" "$RUNNER_TEMP/pi8-evidence"
+      - name: Remove staged installer
+        if: always()
+        run: rm -f "$RUNNER_TEMP/uos-installer"
       - name: Preserve qualification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
