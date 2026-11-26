@@ -7,12 +7,14 @@ on:
       - step-11-simulated-quantum
       - step-7-activation-readiness
       - wifi-withdrawal-review
+      - unifi-pi-bench-review
     paths:
       - .github/workflows/cloud-simulation.yml
       - kit/package/STEP9.md
       - simulation/step11/**
       - pilot/activation/**
       - pilot/wifi/**
+      - pilot/unifi-bench/**
 permissions:
   contents: read
   actions: read
@@ -559,7 +561,7 @@ jobs:
           PY
 
   step-11:
-    if: github.ref_name == 'step-11-simulated-quantum' || github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review'
+    if: github.ref_name == 'step-11-simulated-quantum' || github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review' || github.ref_name == 'unifi-pi-bench-review'
     needs: step-8-consumer
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -648,7 +650,7 @@ jobs:
           PY
 
   activation-readiness:
-    if: github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review'
+    if: github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review' || github.ref_name == 'unifi-pi-bench-review'
     needs: step-11
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -718,7 +720,7 @@ jobs:
           PY
 
   wifi-withdrawal:
-    if: github.ref_name == 'wifi-withdrawal-review'
+    if: github.ref_name == 'wifi-withdrawal-review' || github.ref_name == 'unifi-pi-bench-review'
     needs: activation-readiness
     runs-on: ubuntu-24.04
     timeout-minutes: 5

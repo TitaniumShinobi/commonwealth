@@ -1,0 +1,40 @@
+{
+  "design": "one-psk-per-ssid-review-alternative",
+  "address": "192.168.50.2",
+  "tls_name": "unifi.local",
+  "port": 11443,
+  "prefix": "/proxy/network/integration/v1",
+  "certificate_sha256": "REQUIRED",
+  "ca_file": "/etc/commonwealth/reviewed-controller-ca.pem",
+  "site_id": "00000000-0000-0000-0000-000000000040",
+  "reviewed_static_network_type": "REQUIRED",
+  "groups": [
+    {
+      "credential_ref": "shared-ab",
+      "broadcast_id": "00000000-0000-0000-0000-000000000001",
+      "network_id": "00000000-0000-0000-0000-000000000011",
+      "ap_id": "00000000-0000-0000-0000-000000000021",
+      "vlan_id": 101,
+      "client_ids": [
+        "00000000-0000-0000-0000-000000000031",
+        "00000000-0000-0000-0000-000000000032"
+      ],
+      "reviewed_network_type": "REQUIRED",
+      "reviewed_ap_filter_type": "REQUIRED",
+      "reviewed_personal_security_type": "REQUIRED"
+    },
+    {
+      "credential_ref": "independent-c",
+      "broadcast_id": "00000000-0000-0000-0000-000000000002",
+      "network_id": "00000000-0000-0000-0000-000000000012",
+      "ap_id": "00000000-0000-0000-0000-000000000021",
+      "vlan_id": 102,
+      "client_ids": [
+        "00000000-0000-0000-0000-000000000033"
+      ],
+      "reviewed_network_type": "REQUIRED",
+      "reviewed_ap_filter_type": "REQUIRED",
+      "reviewed_personal_security_type": "REQUIRED"
+    }
+  ]
+}

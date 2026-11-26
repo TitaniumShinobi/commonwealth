@@ -149,6 +149,14 @@ if awk '{print $5}' "$out/host-during.txt" | grep -Eq ':(9543|11443|28082|3478|5
   exit 1
 fi
 sample ready
+{
+  echo 'Local controller probes without API key. Self-signed TLS is fixture-scoped.'
+  for path in /api/ping /proxy/network/integration/v1/sites /integration/v1/sites; do
+    printf '%s ' "$path"
+    sudo -n ip netns exec "$ns" curl --noproxy '*' -ksS --max-time 5 --output /dev/null \
+      --write-out '%{http_code}\n' "https://127.0.0.1:11443$path"
+  done
+} | tee "$out/controller-local-api-probe.txt"
 sudo -n systemctl restart "$unit"
 wait_ready restarted
 guard_process
