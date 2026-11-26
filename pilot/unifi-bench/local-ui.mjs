@@ -41,11 +41,11 @@ try {
     }
     receipt.steps.push({label,pathname:new URL(page.url()).pathname,frames});
   };
-  for(let turn=0;turn<16;turn++){
+  for(let turn=0;turn<35;turn++){
     await page.waitForTimeout(650);
     await snapshot('supported UI step '+turn);
     if(await click(/^(Integrations|API Keys)$/i)) break;
-    if(await click(/^Continue Anyway$/i)) continue;
+    if(await click(/^(?:Continue Anyway|Go To Dashboard)$/i)) continue;
     if(await click(/^(Proceed Without a UI Account|Settings|Control Plane)$/i)) continue;
     if(!page.url().includes("/network") && await click(/^(Network|UniFi Network)$/i)) continue;
     if(await click(/^(Integrations|API Keys)$/i)) break;
