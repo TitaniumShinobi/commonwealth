@@ -607,20 +607,38 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Re-read Step 11 artifact
-        if: always() && steps.step11_artifact.outcome == 'success'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: commonwealth-step-11
-          path: ${{ runner.temp }}/step11-archived
-      - name: Verify archived Step 11 evidence
+
+      - name: Re-read and verify archived Step 11 evidence
         if: always() && steps.step11_artifact.outcome == 'success'
         env:
+          GH_TOKEN: ${{ github.token }}
           ARCHIVE_ID: ${{ steps.step11_artifact.outputs.artifact-id }}
           ARCHIVE_SHA: ${{ steps.step11_artifact.outputs.artifact-digest }}
         run: |
-          for item in trace.ndjson browser.json; do
-            cmp "$RUNNER_TEMP/step11/$item" "$RUNNER_TEMP/step11-archived/$item"
-            sha256sum "$RUNNER_TEMP/step11-archived/$item"
+          root="$RUNNER_TEMP/step11"
+          for attempt in {1..6}; do
+            if curl --fail --silent --show-error --location --max-time 10 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARCHIVE_ID/zip" \
+              -o "$root/archive.zip"; then break; fi
+            if [[ "$attempt" == 6 ]]; then exit 2; fi
+            sleep 2
           done
-          printf 'Verified artifact %s (%s)\n' "$ARCHIVE_ID" "$ARCHIVE_SHA"
+          echo "${ARCHIVE_SHA#sha256:}  $root/archive.zip" | sha256sum --check
+          python3 - "$root" <<'PY'
+          import hashlib, json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          members = ("trace.ndjson", "browser.json")
+          with zipfile.ZipFile(root / "archive.zip") as archive:
+              if sorted(archive.namelist()) != sorted(members):
+                  raise SystemExit("unexpected artifact inventory")
+              hashes = {}
+              for name in members:
+                  saved = archive.read(name)
+                  if saved != (root / name).read_bytes():
+                      raise SystemExit(f"archive member changed: {name}")
+                  hashes[name] = hashlib.sha256(saved).hexdigest()
+          print(json.dumps({"step11_custody": "verified", "artifact": os.environ["ARCHIVE_ID"],
+                            "archive_sha256": os.environ["ARCHIVE_SHA"], "member_sha256": hashes}))
+          PY
