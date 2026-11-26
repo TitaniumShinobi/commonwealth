@@ -15,6 +15,7 @@ on:
       - pilot/activation/**
       - pilot/wifi/**
       - pilot/unifi-bench/**
+      - pilot/pi8/**
 permissions:
   contents: read
   actions: read

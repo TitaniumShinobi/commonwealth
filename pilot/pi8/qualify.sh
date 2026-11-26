@@ -152,7 +152,7 @@ sample ready
 {
   echo 'Local controller probes without API key. Self-signed TLS is fixture-scoped.'
   for path in /api/ping /proxy/network/integration/v1/sites /integration/v1/sites; do
-    response=$(mktemp)
+    response=$(mktemp "$out/.response.XXXXXX")
     metadata=$(sudo -n ip netns exec "$ns" curl --noproxy '*' -ksS --max-time 5 --max-filesize 262144 \
       -H 'Accept: application/json' --output "$response" --write-out '%{http_code}|%{content_type}' \
       "https://127.0.0.1:11443$path")
