@@ -52,10 +52,21 @@ class Endpoint(http.server.BaseHTTPRequestHandler):
         if self.headers["X-API-Key"] != "synthetic-fixture-only":
             self.send_error(401)
             return
-        if not self.path.startswith("/proxy/network/integration/v1/sites?"):
-            self.send_error(404)
-            return
-        result = b'{"count":0,"offset":0,"totalCount":0,"data":[]}'
+        if self.path.startswith("/proxy/network/integration/v1/sites?"):
+            result = b'{"count":0,"offset":0,"totalCount":0,"data":[]}'
+        else:
+            path = self.path.removeprefix(f"/proxy/network/integration/v1/sites/{site}/")
+            name, query = path.split("?", 1) if "?" in path else (path, "")
+            datasets = dict(zip(DATASETS, (networks, broadcasts, devices, clients)))
+            if name in datasets and query == "offset=0&limit=100":
+                rows = [{"id": key, **row} for key, row in datasets[name].items()]
+                body = {"offset": 0, "limit": 100, "count": len(rows), "totalCount": len(rows), "data": rows}
+            elif name.startswith("clients/") and not query and name[8:] in clients:
+                body = {"id": name[8:], **clients[name[8:]]}
+            else:
+                self.send_error(404)
+                return
+            result = json.dumps(body).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(result)))
@@ -63,32 +74,6 @@ class Endpoint(http.server.BaseHTTPRequestHandler):
         self.wfile.write(result)
 
 
-with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("127.0.0.1", 0), Endpoint) as server:
-    root = Path(path)
-    cert, key = root / "cert", root / "key"
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
-                    "-keyout", key, "-out", cert], capture_output=True, check=True, timeout=5)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(cert, key)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        import hashlib
-        pin = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
-        target = {"address": "127.0.0.1", "tls_name": "localhost", "port": server.server_port,
-                  "prefix": "/proxy/network/integration/v1", "certificate_sha256": pin, "ca_file": str(cert)}
-        assert Controller(target, "synthetic-fixture-only").complete("/sites") == {}
-        with contextlib.suppress(RuntimeError):
-            Controller(target, "wrong").complete("/sites")
-            raise AssertionError("incorrect API key accepted")
-        with contextlib.suppress(ValueError):
-            Controller({**target, "certificate_sha256": "0" * 64}, "synthetic-fixture-only").complete("/sites")
-            raise AssertionError("incorrect TLS pin accepted")
-    finally:
-        server.shutdown()
-        thread.join()
 print(json.dumps({"scope": "synthetic adapter and local TLS fixture", "verdict": "PASS",
                   "configuration_conflicts": 4, "transport_tests": 3, "physical_readback": "UNVERIFIED"}))
 
@@ -213,3 +198,63 @@ for name, controller_case, bench_case, expected in receipt_cases:
     assert report["signed_admission"] == "HELD"
     reports[name] = report
 print(json.dumps({"scope": "synthetic offline receipt checks", "receipt_checks": reports}))
+
+with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("127.0.0.1", 0), Endpoint) as server:
+    root = Path(path)
+    cert, key = root / "cert", root / "key"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+                    "-keyout", key, "-out", cert], capture_output=True, check=True, timeout=5)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, key)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        import hashlib
+        pin = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
+        target = {"address": "127.0.0.1", "tls_name": "localhost", "port": server.server_port,
+                  "prefix": "/proxy/network/integration/v1", "certificate_sha256": pin, "ca_file": str(cert)}
+        assert Controller(target, "synthetic-fixture-only").complete("/sites") == {}
+        with contextlib.suppress(RuntimeError):
+            Controller(target, "wrong").complete("/sites")
+            raise AssertionError("incorrect API key accepted")
+        with contextlib.suppress(ValueError):
+            Controller({**target, "certificate_sha256": "0" * 64}, "synthetic-fixture-only").complete("/sites")
+            raise AssertionError("incorrect TLS pin accepted")
+        controller_path = root / "controller.json"
+        controller_path.write_text(json.dumps({**controller_config, **target,
+                                               "design": "one-psk-per-ssid-review-alternative"}))
+        bench_path = root / "bench.json"
+        bench_path.write_text(json.dumps({**bench_config, "trunk": "lo"}))
+        secret_path = root / "api-key"
+        secret_path.touch(mode=0o600)
+        reports = {}
+        for name, credential, configuration, expected_inventory, has_capture in (
+            ("capture_incomplete", "synthetic-fixture-only", bench_path, "PASS", True),
+            ("controller_denied", "wrong", bench_path, "UNVERIFIED", False),
+            ("capture_receipt_absent", "synthetic-fixture-only", root / "missing.json", "PASS", False),
+        ):
+            secret_path.write_text(credential)
+            output = root / name
+            execution = subprocess.run(["bash", Path(__file__).with_name("operator.sh"),
+                                        controller_path, secret_path, configuration, output],
+                                       capture_output=True, text=True, timeout=20)
+            assert execution.returncode == 2, execution.stderr
+            score_report = json.loads((output / "receipt-score.json").read_text())
+            assert score_report["controller_inventory"]["verdict"] == expected_inventory
+            assert score_report["tagged_dataplane"]["verdict"] == "UNVERIFIED"
+            assert score_report["correlation"]["verdict"] == "UNVERIFIED"
+            assert score_report["signed_admission"] == "HELD"
+            assert (output / "tagged-bench.json").exists() == has_capture
+            if has_capture:
+                capture = json.loads((output / "tagged-bench.json").read_text())
+                assert capture["received_tags"] == []
+                assert "8GB Pi 4 native ARM64 hardware not demonstrated" in capture["blockers"]
+            reports[name] = {"exit": execution.returncode, "capture_receipt_written": has_capture,
+                             **score_report}
+        print(json.dumps({"scope": "operator CLI with isolated TLS fixture and real bench preflight",
+                          "operator_flow": reports}))
+    finally:
+        server.shutdown()
+        thread.join()

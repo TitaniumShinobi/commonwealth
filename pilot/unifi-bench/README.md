@@ -53,8 +53,11 @@ the physical bench receipts before any separately authorized field test.
 
 ## Score the observation receipts
 
-After capture, run the offline checker from the staged repository root. Supply the
-same two input files used during collection.
+The operator command writes `receipt-score.json` beside the collection receipts,
+even if capture is skipped, interrupted by a collection error, or incomplete.
+Review that score to see which evidence was available. The operator command still
+returns 2 while signed admission is held. To rescore offline, run the following
+from the staged repository root using the same inputs.
 
 ```bash
 python3 pilot/unifi-bench/check_receipts.py \
