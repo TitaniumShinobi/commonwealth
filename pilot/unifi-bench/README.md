@@ -1,6 +1,6 @@
 # Pi 4 and UniFi observation bench
 
-This is an observation bundle. It never changes UniFi configuration, signs AP readback for the forwarding guard, or turns on forwarding. The pinned ARM64 cloud profile qualifies UniFi OS Server 5.1.42 and the Linux edge at an enforced 8 GiB budget. It cannot identify real radio behavior, Pi storage endurance, or physical power.
+The physical operator entry point is observation-only. It never changes UniFi configuration or turns on forwarding. The guard envelope signer is exercised with disposable synthetic AP trust in Actions. The pinned ARM64 cloud profile qualifies UniFi OS Server 5.1.42 and the Linux edge at an enforced 8 GiB budget. It cannot identify real radio behavior, Pi storage endurance, or physical power.
 
 ## Design under review
 
@@ -19,7 +19,7 @@ RADIUS-assigned VLANs with 802.1X are another design option. This needs a separa
 
 ```bash
 python3 pilot/unifi-bench/bench.py "$BENCH_JSON" --out "$WORK/preflight.json"
-bash pilot/unifi-bench/run.sh "$CONTROLLER_JSON" "$PRIVATE_API_KEY_FILE" "$BENCH_JSON" "$WORK/new-bench-receipts"
+bash pilot/unifi-bench/operator.sh "$CONTROLLER_JSON" "$PRIVATE_API_KEY_FILE" "$BENCH_JSON" "$WORK/new-bench-receipts"
 ```
 
 The preflight and bench return code 2 while physical authority remains unverified. Capture requires an account that can run tcpdump on the reviewed trunk. If privileges are needed, use the local owner-approved root console and private output paths. At each prompt send approved IPv4 traffic from only that station. The collector waits up to 15 seconds per station and records only a bounded packet summary. A source must match the controller's client ID, MAC, IP and expected VLAN. An offload that strips tags or a missing frame is an observation blocker. Use a verified trunk mirror or reviewed capture path and rerun. Never weaken the criteria to accommodate a missing tag.
@@ -31,3 +31,22 @@ After separate approval and an accepted adapter, use the existing [guard runbook
 - [Official local Integration API](https://help.ui.com/hc/en-us/articles/30076656117655-Getting-Started-with-the-Official-UniFi-API)
 - [Wi-Fi broadcasts](https://developer.ui.com/network/v10.6.106/getwifibroadcastpage) · [Networks](https://developer.ui.com/network/v10.6.106/getnetworksoverviewpage) · [Connected clients](https://developer.ui.com/network/v10.6.106/getconnectedclientoverviewpage)
 - [Ubiquiti PPSK and RADIUS VLAN assignment](https://help.ui.com/hc/en-us/articles/29887064407319-Using-PPSK-RADIUS-for-Multiple-VLANs-On-an-SSID-in-UniFi-Network)
+
+## Signed adapter and physical stop point
+
+The signed adapter produces the existing guard envelope only after validating an exact
+target and current nonce, epoch and deadline, full conflict-free inventory,
+authenticated AP-applied single-PSK membership, and fresh independent tags for A, B and C.
+The test observer and disposable signing key exist only in the cloud proof. The
+operator command accepts the private controller configuration, key file, physical
+bench configuration and a new receipt directory. It accepts no offline proof or
+signing key. Keep the guard closed when the command returns status 2.
+
+The locally authenticated sites endpoint verifies controller transport and API
+access. The documented broadcast inventory describes controller configuration.
+The available sources do not establish AP-applied credential membership or its
+exclusivity on the radio. Tagged traffic corroborates the observed client/VLAN
+pairing, but cannot establish which secret or AP policy authorized it. A supported,
+independently authenticated applied-state source covering those facts is required
+before the operator CLI can issue a trusted guard envelope. Review that source and
+the physical bench receipts before any separately authorized field test.

@@ -91,3 +91,54 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
         thread.join()
 print(json.dumps({"scope": "synthetic adapter and local TLS fixture", "verdict": "PASS",
                   "configuration_conflicts": 4, "transport_tests": 3, "physical_readback": "UNVERIFIED"}))
+
+from copy import deepcopy
+import time
+from signed_readback import issue
+
+with tempfile.TemporaryDirectory() as directory:
+    private, public, payload, signature = (Path(directory) / n for n in ("key", "pub", "body", "sig"))
+    subprocess.run(["openssl", "genpkey", "-algorithm", "ED25519", "-out", private], check=True, timeout=5)
+    subprocess.run(["openssl", "pkey", "-in", private, "-pubout", "-out", public], check=True, timeout=5)
+    target = {"edge": "synthetic-edge", "ap": uid(21), "credential": "shared-ab",
+              "generation": 7, "vlan": 101, "interface": "guest101", "subnet": "10.77.101.0/24"}
+    fresh = {"nonce": "a" * 48, "epoch": 1, "kind": "admit", "expires_at": int(time.time()) + 30}
+
+    def observe(subject, challenge):
+        observations, conflicts = evaluate(config, networks, broadcasts, devices, clients)
+        assert observations[0]["ap_id"] == subject["ap"]
+        stations = {role: {"mac": f"02:00:00:00:00:0{i}", "ipv4": f"192.0.2.{i}", "vlan": vlan}
+                    for i, (role, vlan) in enumerate(zip("ABC", (101, 101, 102)), 1)}
+        return {"target": subject, "challenge": challenge, "complete_inventory": True,
+                "authenticated_ap": True, "single_personal_psk": True, "conflicts": conflicts,
+                "vlan_credentials": ["shared-ab"], "future_admission": "allowed", "stations": stations,
+                "tags": {role: {"station": deepcopy(station), "observed_at": time.time()}
+                         for role, station in stations.items()}}
+
+    def verified():
+        envelope = issue(target, lambda: fresh, observe, private)
+        payload.write_text(json.dumps(envelope["body"], sort_keys=True, separators=(",", ":")))
+        signature.write_bytes(bytes.fromhex(envelope["signature"]))
+        subprocess.run(["openssl", "pkeyutl", "-verify", "-rawin", "-pubin", "-inkey", public,
+                        "-in", payload, "-sigfile", signature], check=True, capture_output=True, timeout=5)
+        assert envelope["body"] == {**target, **fresh, "future_admission": "allowed", "vlan_credentials": ["shared-ab"]}
+        return envelope["body"]
+
+    admitted = verified()
+    fresh.update(nonce="b" * 48, epoch=2, kind="renew")
+    renewed = verified()
+    assert admitted["nonce"] != renewed["nonce"] and admitted["epoch"] < renewed["epoch"]
+    rejected = []
+    for field, value in {"complete_inventory": False, "authenticated_ap": False,
+                         "single_personal_psk": False, "conflicts": ["another broadcast"],
+                         "future_admission": "denied", "target": {**target, "generation": 6},
+                         "challenge": {**fresh, "epoch": 1}, "tags": {}}.items():
+        try:
+            issue(target, lambda: fresh, lambda *args: {**observe(*args), field: value}, private)
+        except ValueError:
+            rejected.append(field)
+        else:
+            raise AssertionError("unsafe synthetic proof signed: " + field)
+    print(json.dumps({"scope": "synthetic signer, separate from authentic controller receipt",
+                      "signed_and_verified": [admitted, renewed], "rejected": rejected,
+                      "physical_adapter": "BLOCKED_AP_APPLIED_EVIDENCE"}))
