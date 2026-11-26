@@ -55,6 +55,11 @@ try {
     if(local){
       const text=await page.locator('body').innerText();
       if(!/local|offline|sign in to your console/i.test(text) && !await page.locator('input[name*="local" i]').count()) throw Error('cloud sign-in only; local setup not exposed');
+      const terms=page.locator('input[name="tosAndEula"]');
+      if(page.url().includes('/setup/') && await page.locator('input[name="localPassword"]').count() && await terms.count()){
+        await terms.check({timeout:3000});
+        receipt.local_terms_accepted=true;
+      }
       for(const item of await page.locator('input[type=password]').all())if(await item.isVisible())await item.fill(password);
       await fill('input[autocomplete=username],input[name*="username" i],input[placeholder*="username" i]','cw-fixture-admin');
     }
