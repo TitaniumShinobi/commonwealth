@@ -659,7 +659,7 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           sudo -n apt-get update -qq
-          sudo -n apt-get install -y -qq dnsmasq-base isc-dhcp-client conntrack nftables
+          sudo -n apt-get install -y -qq dnsmasq-base udhcpc conntrack nftables
       - name: Exercise default-closed guest and public HTTPS
         run: |
           bash pilot/activation/prove.sh "$RUNNER_TEMP/activation-readiness"

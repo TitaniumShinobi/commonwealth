@@ -79,20 +79,19 @@ sudo -n sysctl -qw net.ipv4.ip_forward=1
 servers=()
 for relay in "${relays[@]}"; do servers+=("--server=$relay"); done
 sudo -n ip netns exec "$edge" dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --bind-interfaces \
-  --interface=lan0 --listen-address="$portal" --log-dhcp --log-queries \
+  --interface=lan0 --listen-address="$portal" --log-dhcp --log-queries --log-facility=- \
   --dhcp-range=10.231.56.40,10.231.56.60,255.255.255.0,10m \
   --dhcp-host="$mac,$leased" --dhcp-option="3,$portal" --dhcp-option="6,$portal" \
   "${servers[@]}" > "$out/dnsmasq.log" 2>&1 &
 dns_pid=$!
-g timeout 25s dhclient -1 -4 -v -sf "$src/lease.sh" -lf "$out/dhcp.leases" \
-  -pf "$out/dhclient.pid" lan0 > "$out/client-dhcp.log" 2>&1
+g timeout 25s udhcpc -n -q -f -s "$src/lease.sh" -i lan0 > "$out/client-dhcp.log" 2>&1
 g ip -br address > "$out/guest-addresses.txt"
 g ip -4 route > "$out/guest-routes.txt"
 test "$(g ip -o link show | wc -l)" -eq 2
 test "$(g ip -4 route show default | wc -l)" -eq 1
 grep -F "$leased/24" "$out/guest-addresses.txt"
 grep -F "via $portal dev lan0" "$out/guest-routes.txt"
-grep -F "DHCPACK" "$out/client-dhcp.log"
+grep -F "lease of $leased" "$out/client-dhcp.log"
 emit 'DHCP PASS: lease AND only guest default route'
 client() {
   g env -i PATH=/usr/bin:/bin curl -4 --noproxy '*' --silent --show-error \
