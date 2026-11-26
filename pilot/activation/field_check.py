@@ -29,7 +29,10 @@ def main():
             local = (evidence_root / requested).resolve()
             if requested.is_absolute() or not local.is_relative_to(evidence_root):
                 return False
-            return local.is_file() and hashlib.file_digest(local.open("rb"), "sha256").hexdigest() == entry["sha256"]
+            if not local.is_file():
+                return False
+            with local.open("rb") as source:
+                return hashlib.file_digest(source, "sha256").hexdigest() == entry["sha256"]
         except (KeyError, TypeError, OSError, ValueError):
             return False
 
@@ -41,8 +44,15 @@ def main():
     if field.get("activation_authority") and not available(field["activation_authority"]):
         invalid.append("activation_authority")
         field["activation_authority"] = None
-    result = assess(field)
-    print(json.dumps({"mode": "offline_assessment_only", "source_rejections": invalid, "assessment": result},
+    structure = assess(field)
+    result = {"field_acceptance": "UNVERIFIED", "ready_to_request_activation": "UNVERIFIED", "activation": "HELD"}
+    completeness = {"missing_readiness": structure["missing_readiness"],
+                    "missing_field_observations": structure["missing_field_observations"],
+                    "receipt_binding_rejections": structure["receipt_binding_rejections"],
+                    "all_required_records_supplied": not (invalid or structure["missing_readiness"]
+                        or structure["missing_field_observations"] or structure["receipt_binding_rejections"])}
+    print(json.dumps({"mode": "offline_assessment_only", "source_integrity": "MATCHED" if not invalid and manifest else "INCOMPLETE",
+                      "source_rejections": invalid, "completeness": completeness, "assessment": result},
                      sort_keys=True))
 
 

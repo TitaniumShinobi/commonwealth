@@ -27,11 +27,12 @@ cleanup() {
   sudo -n iptables -D INPUT -i "$uplink" -j DROP 2>/dev/null || true
   sudo -n iptables -t nat -D POSTROUTING -s "$gateway" ! -o "$uplink" -j MASQUERADE 2>/dev/null || true
   local ns pid
-  for ns in "$guest" "$edge" "$attacker" "$peer"; do
+  for ns in "$guest" "$edge" "$attacker" "$peer" "$unaffected"; do
     while read -r pid; do
       if [[ -n "$pid" ]]; then sudo -n kill "$pid" 2>/dev/null || true; fi
     done < <(sudo -n ip netns pids "$ns" 2>/dev/null || true)
   done
+  sudo -n ip netns del "$unaffected" 2>/dev/null || true
   sudo -n ip netns del "$attacker" 2>/dev/null || true
   sudo -n ip netns del "$peer" 2>/dev/null || true
   rm -rf -- "$operator" "$operator-wrong" "$peer_keys"
@@ -47,8 +48,9 @@ e() { sudo -n ip netns exec "$edge" "$@"; }
 sudo -n ip netns add "$guest"
 sudo -n ip netns add "$edge"
 sudo -n ip netns add "$attacker"
+sudo -n ip netns add "$unaffected"
 sudo -n ip netns add "$peer"
-for ns in "$guest" "$edge" "$attacker" "$peer"; do
+for ns in "$guest" "$edge" "$attacker" "$peer" "$unaffected"; do
   sudo -n ip -n "$ns" link set lo up
   sudo -n ip netns exec "$ns" sysctl -qw net.ipv6.conf.all.disable_ipv6=1
 done
@@ -83,6 +85,13 @@ sudo -n ip -n "$peer" link set peer0 up
 sudo -n ip -n "$peer" route add 10.231.56.0/24 via 10.231.60.1
 sudo -n ip -n "$peer" addr add 10.231.60.3/24 dev peer0
 sudo -n ip -n "$peer" addr add 10.231.60.4/24 dev peer0
+sudo -n ip link add lan2 netns "$edge" type veth peer name lan0 netns "$unaffected"
+e ip addr add 10.231.61.1/24 dev lan2
+e ip link set lan2 up
+sudo -n ip -n "$unaffected" link set lan0 address 02:23:15:61:00:02
+sudo -n ip -n "$unaffected" addr add 10.231.61.2/24 dev lan0
+sudo -n ip -n "$unaffected" link set lan0 up
+sudo -n ip -n "$unaffected" route add default via 10.231.61.1
 sudo -n install -d -m 755 "/etc/netns/$guest"
 printf '# managed by fixture DHCP\n' | sudo -n tee "/etc/netns/$guest/resolv.conf" >/dev/null
 mapfile -t relays < <(awk '$1=="nameserver" && $2 ~ /^[0-9.]+$/ && $2 !~ /^127\./ {print $2}' /etc/resolv.conf)
@@ -151,7 +160,24 @@ Path(sys.argv[2]).write_text(json.dumps(target))
 PY
 if python3 "$src/edge.py" render "$out/wrong-target.json" open "$out/admission.json" "$operator/operator.pub" >/dev/null 2>&1; then exit 1; fi
 emit 'PASS: operator credential proof rejected on changed target'
-python3 "$src/edge.py" render "$out/target.json" open "$out/admission.json" "$operator/operator.pub" > "$out/open.nft"
+python3 "$src/edge.py" record-session "$out/target.json" "$out/admission.json" "$operator/operator.pub" "$operator"
+apply_guard() {
+  python3 "$src/edge.py" guard "$out/target.json" "$operator/operator.pub" "$1" > "$out/$2-guard.nft"
+  e nft --check -f "$out/$2-guard.nft"
+  e nft -f "$out/$2-guard.nft"
+}
+unaffected_read() {
+  sudo -n ip netns exec "$unaffected" env -i PATH=/usr/bin:/bin curl -4 --noproxy '*' \
+    --silent --show-error --resolve "example.com:443:$(awk 'NR==1 {print $1}' "$out/dns-a.txt")" \
+    --connect-timeout 4 --max-time 8 --output /dev/null --write-out '%{http_code} %{ssl_verify_result}\n' "$url"
+}
+apply_guard "$operator" admitted
+python3 "$src/edge.py" render "$out/target.json" open "$out/admission.json" "$operator/operator.pub" "$operator" > "$out/open.nft"
+cp "$out/open.nft" "$out/exact-rollback.nft"
+unaffected_probe() {
+  unaffected_read > "$out/unaffected-$1.txt"
+  grep -x '200 0' "$out/unaffected-$1.txt"
+}
 e nft --check -f "$out/open.nft"
 e nft -f "$out/open.nft"
 if ! client > "$out/https-admitted.txt" 2> "$out/https-admitted.err"; then
@@ -160,6 +186,7 @@ if ! client > "$out/https-admitted.txt" 2> "$out/https-admitted.err"; then
 fi
 grep -E '^2[0-9]{2} [0-9.]+ 0$' "$out/https-admitted.txt"
 emit 'PASS: ordinary public HTTPS, verified TLS, routed guest only'
+unaffected_probe baseline
 e nft list ruleset > "$out/admitted-kernel.nft"
 e conntrack -L -p tcp -s "$leased" --dport 443 > "$out/conntrack-before.txt"
 grep -F "src=$leased" "$out/conntrack-before.txt"
@@ -198,6 +225,11 @@ client > "$out/https-rollback.txt"
 grep -E '^2[0-9]{2} [0-9.]+ 0$' "$out/https-rollback.txt"
 emit 'PASS: approved baseline restored before withdrawal'
 python3 "$src/edge.py" approve "$out/target.json" withdraw "$operator/operator.key" > "$out/withdrawal.json"
+python3 "$src/edge.py" record-session "$out/target.json" "$out/withdrawal.json" "$operator/operator.pub" "$operator"
+apply_guard "$operator" withdrawn
+if python3 "$src/edge.py" render "$out/target.json" open "$out/admission.json" "$operator/operator.pub" "$operator" > "$out/admission-replay.txt" 2>&1; then exit 1; fi
+if python3 "$src/edge.py" record-session "$out/target.json" "$out/admission.json" "$operator/operator.pub" "$operator" > "$out/record-replay.txt" 2>&1; then exit 1; fi
+emit 'PASS: original signed admission rejected against durable withdrawal'
 python3 "$src/edge.py" render "$out/target.json" withdraw "$out/withdrawal.json" "$operator/operator.pub" > "$out/withdrawn.nft"
 e nft --check -f "$out/withdrawn.nft"
 e nft -f "$out/withdrawn.nft"
@@ -206,7 +238,26 @@ e conntrack -L -p tcp -s "$leased" --dport 443 > "$out/conntrack-after.txt"
 test ! -s "$out/conntrack-after.txt"
 deny 'withdrawal and conntrack cleanup'
 e nft -f "$out/closed.nft"
+apply_guard "$operator" restarted
 deny 'closed startup after withdrawal'
+cmp "$out/open.nft" "$out/exact-rollback.nft"
+e nft -f "$out/exact-rollback.nft"
+deny 'exact approved baseline cannot bypass durable withdrawal'
+unaffected_probe exact-rollback
+for condition in missing corrupt; do
+  state_dir="$peer_keys/$condition"
+  mkdir "$state_dir"
+  if [[ "$condition" == corrupt ]]; then printf '{invalid' > "$state_dir/session-state.json"; fi
+  if python3 "$src/edge.py" render "$out/target.json" open "$out/admission.json" "$operator/operator.pub" "$state_dir" > "$out/$condition-denial.txt" 2>&1; then exit 1; fi
+  apply_guard "$state_dir" "$condition"
+  e nft -f "$out/exact-rollback.nft"
+  deny "$condition operator state fails closed during exact rollback"
+  unaffected_probe "$condition"
+done
+apply_guard "$operator" final
+e conntrack -L -p tcp -s "$leased" --dport 443 > "$out/conntrack-after-replays.txt"
+test ! -s "$out/conntrack-after-replays.txt"
+emit 'PASS: unaffected participant retained HTTPS and withdrawn conntrack stayed clear'
 sha256sum "$out/target.json" "$out/"*.nft > "$out/config-digests.txt"
 python3 "$src/field_check.py" "$src/../field-receipt.json" > "$out/field-assessment.json"
 python3 - "$out/field-assessment.json" <<'PY'
@@ -218,4 +269,6 @@ assert report["assessment"]["field_acceptance"] == "UNVERIFIED"
 assert report["assessment"]["activation"] == "HELD"
 PY
 emit 'PASS: offline field checker preserves absent-evidence verdict and held activation'
+python3 "$src/field_check_test.py" "$out"
+emit 'PASS: complete hash-consistent synthetic self-attestation remains UNVERIFIED and HELD'
 emit "PASS: guest-edge wired fixture revision $GITHUB_SHA"
