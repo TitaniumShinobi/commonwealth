@@ -5,6 +5,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 import tempfile
 from pathlib import Path
 
@@ -15,27 +16,36 @@ TARGET = {"ap": "fixture-ap", "edge": "fixture-edge", "credential": "shared-gues
           "vlan": 101, "stations": ["A", "B"]}
 ADDRESSES = {"a": "10.77.101.20", "b": "10.77.101.21", "c": "10.77.102.20"}
 SERVER = """
-import socket,sys,threading
+import socket,sys,threading,json
 server=socket.socket()
 server.bind(('203.0.113.2',8090))
 server.listen()
 clients=[]
-def loop(client):
+received={}
+lock=threading.Lock()
+def loop(client, source):
     with client:
         while item:=client.recv(1):
+            with lock: received[source]=received.get(source,0)+len(item)
             client.sendall(item)
 def accept():
     while True:
-        client,_=server.accept()
-        clients.append(client)
-        threading.Thread(target=loop,args=(client,),daemon=True).start()
+        client,address=server.accept()
+        clients.append((client,address[0]))
+        threading.Thread(target=loop,args=(client,address[0]),daemon=True).start()
 threading.Thread(target=accept,daemon=True).start()
 print('ready',flush=True)
 for line in sys.stdin:
-    for client in clients:
-        try: client.sendall(b'p')
+    if line.strip()=='stats':
+        with lock: print(json.dumps(received),flush=True)
+        continue
+    sent={}
+    for client,source in clients:
+        try:
+            client.sendall(b'p')
+            sent[source]=sent.get(source,0)+1
         except OSError: pass
-    print('pushed',flush=True)
+    print(json.dumps(sent),flush=True)
 """
 CLIENT = """
 import socket,sys
@@ -49,6 +59,27 @@ for line in sys.stdin:
         print(item.decode() or 'closed',flush=True)
     except OSError:
         print('blocked',flush=True)
+"""
+
+
+CONTINUITY = """
+import json,select,socket,sys,time
+observations=[]
+while len(observations)<200:
+    if select.select([sys.stdin],[],[],0.12)[0]:
+        break
+    start=time.monotonic()
+    try:
+        with socket.create_connection(('203.0.113.2',8090),0.65) as conn:
+            conn.settimeout(0.65)
+            conn.sendall(b'c')
+            live=conn.recv(1)==b'c'
+    except OSError:
+        live=False
+    observations.append({"started":start,"elapsed":time.monotonic()-start,"fresh_echo":live})
+    if len(observations)==1:
+        print('sampled',flush=True)
+print(json.dumps(observations),flush=True)
 """
 
 
@@ -130,7 +161,8 @@ table inet wifi_guard {
    %s
  }
 }
-""" % ('iifname "guest101" counter drop' if block else '',
+""" % (('iifname "guest101" counter drop\n'
+        'iifname "wan0" ip daddr 10.77.101.0/24 counter drop') if block else '',
        'oifname "guest101" counter drop' if block else '')
 
 
@@ -158,8 +190,9 @@ def run(out):
             process.stdin.write(action + "\n")
             process.stdin.flush()
             return f.line(process)
+        edge = "g"
         def tracking():
-            return r("g", "conntrack", "-L", "-p", "tcp", "-d", "203.0.113.2", "--dport", "8090")
+            return r(edge, "conntrack", "-L", "-p", "tcp", "-d", "203.0.113.2", "--dport", "8090")
         def ap_readback(nonce):
             result = subprocess.check_output([sys.executable, __file__, "--ap-readback", str(ap), str(ap_state), nonce],
                                              text=True, timeout=5)
@@ -169,6 +202,12 @@ def run(out):
                 return admit(operator_public, ap_public, approval, readback, challenge, revoked)
             except (ValueError, OSError, subprocess.SubprocessError):
                 return False
+        def reconstruct_guard():
+            return subprocess.check_output([sys.executable, __file__, "--recover-guard",
+                                            str(operator_public), str(revoked)], text=True, timeout=5)
+        def denied_fresh(role):
+            code = ("import socket; socket.create_connection(('203.0.113.2',8090),0.6).close()")
+            return f.run(sys.executable, "-c", code, namespace=role, check=False).returncode != 0
         try:
             for role in ("a", "b", "c", "ap", "g", "w"):
                 f.create(role)
@@ -224,12 +263,28 @@ def run(out):
             for role, child in guests.items():
                 expect(f"{role}_connected", "ready", f.line(child))
                 expect(f"{role}_echo_before_withdrawal", "x", client_action(child, "echo"))
+            for source, destination in (("a", "b"), ("b", "a")):
+                expect(source + "_local_gateway_reachable", True, f.ping(source, "10.77.101.1"))
+                expect(source + "_same_vlan_peer_isolated", False, f.ping(source, ADDRESSES[destination]))
+            pushed_before = json.loads(client_action(server, "push"))
+            expect("each_existing_socket_received_live_downstream_before_withdrawal", True,
+                   all(pushed_before.get(ip, 0) >= 1 for ip in ADDRESSES.values()))
+            for role in guests:
+                expect(role + "_downstream_before_withdrawal", "p", client_action(guests[role], "read"))
+            continuous = f.launch("c", CONTINUITY)
+            expect("c_continuous_first_observation", "sampled", f.line(continuous))
             before = tracking()
             evidence["conntrack_before"] = before.splitlines()
             expect("all_sessions_tracked", True, all(f"src={ip}" in before for ip in ADDRESSES.values()))
-            persist(revoked, sign(operator, {**TARGET, "intent": "withdraw"}))
+            server_before = json.loads(client_action(server, "stats"))
+            crash_started = time.monotonic()
+            crash = subprocess.run([sys.executable, __file__, "--commit-then-crash", str(operator), str(revoked)],
+                                   check=False, timeout=5)
+            expect("crash_after_durable_commit", 77, crash.returncode)
+            expect("guard_not_installed_in_crashed_process", False,
+                   'iifname "guest101" counter' in r("g", "nft", "list", "table", "inet", "wifi_guard"))
             evidence["signed_withdrawal"] = json.loads(revoked.read_text())
-            f.program("g", guard(True))
+            f.program("g", reconstruct_guard())
             for role in ("a", "b"):
                 r("g", "conntrack", "-D", "-p", "tcp", "-s", ADDRESSES[role], "--dport", "8090")
             after = tracking()
@@ -239,25 +294,87 @@ def run(out):
             expect("c_conntrack_tuple_preserved", True, any(
                 line.split("[ASSURED]")[0].split("src=", 1)[1] in after
                 for line in before.splitlines() if f"src={ADDRESSES['c']}" in line))
-            expect("server_push", "pushed", client_action(server, "push"))
+            pushed_after = json.loads(client_action(server, "push"))
+            evidence["downstream_origin_send_counts_after_guard"] = pushed_after
+            expect("origin_wrote_to_existing_withdrawn_sockets", True,
+                   all(pushed_after.get(ADDRESSES[role], 0) >= 1 for role in ("a", "b")))
             for role in ("a", "b"):
                 expect(f"{role}_downstream_denied_with_association_retained", "blocked", client_action(guests[role], "read"))
                 expect(f"{role}_upstream_denied_with_association_retained", "blocked", client_action(guests[role], "echo"))
+            for role in ("a", "b"):
+                expect(f"{role}_fresh_flow_denied", True, denied_fresh(role))
+            server_after = json.loads(client_action(server, "stats"))
+            expect("origin_received_no_withdrawn_payload", [server_before.get(ADDRESSES[x], 0) for x in ("a", "b")],
+                   [server_after.get(ADDRESSES[x], 0) for x in ("a", "b")])
             expect("c_downstream_continues", "p", client_action(guests["c"], "read"))
             expect("c_upstream_continues", "x", client_action(guests["c"], "echo"))
             expect("kernel_ap_assignments_unchanged_eviction_withheld", vlan_table,
                    json.loads(r("ap", "bridge", "-j", "vlan", "show")))
             evidence["restart_and_rollback"] = []
-            for action in ("restart", "exact_rollback"):
+            for action in ("policy_process_restart", "exact_rollback"):
                 challenge = secrets.token_hex(16)
                 expect(action + "_old_readback_and_admission_denied", False, admission(current, challenge))
                 expect(action + "_fresh_readback_cannot_override_tombstone", False, admission(ap_readback(challenge), challenge))
                 digest = f.program("g", rules)
-                f.program("g", guard(True))
+                f.program("g", reconstruct_guard())
                 evidence["restart_and_rollback"].append({"action": action, "baseline_sha256": digest})
                 expect(action + "_a_still_blocked", "blocked", client_action(guests["a"], "echo"))
                 expect(action + "_b_still_blocked", "blocked", client_action(guests["b"], "echo"))
                 expect(action + "_c_still_live", "x", client_action(guests["c"], "echo"))
+            rollback_finished = time.monotonic()
+            time.sleep(0.35)
+            continuous.stdin.write("stop\n")
+            continuous.stdin.flush()
+            samples = json.loads(f.line(continuous))
+            evidence["c_continuity"] = {"sample_budget_seconds": 0.9, "crash_started": crash_started,
+                                        "rollback_finished": rollback_finished, "samples": samples}
+            expect("c_fresh_continuity_spans_crash_withdrawal_and_rollback", True,
+                   len(samples) >= 5 and samples[0]["started"] <= crash_started
+                   and samples[-1]["started"] >= rollback_finished)
+            expect("c_no_failed_fresh_connection_or_gap_over_budget", True,
+                   all(row["fresh_echo"] and row["elapsed"] <= 0.9 for row in samples)
+                   and all(b["started"] - a["started"] <= 0.9 for a, b in zip(samples, samples[1:])))
+            reverse = r("g", "conntrack", "-L", "-p", "tcp", "-s", "203.0.113.2", "--sport", "8090")
+            expect("withdrawn_reverse_conntrack_not_recreated", False, any(
+                f"dst={ADDRESSES[role]}" in reverse for role in ("a", "b")))
+            live_tracking = tracking()
+            evidence["conntrack_live_after_rollback"] = live_tracking.splitlines()
+            expect("withdrawn_conntrack_not_recreated_during_live_rollback", [False, False, True],
+                   [f"src={ip}" in live_tracking for ip in ADDRESSES.values()])
+
+            # This deliberately breaks the old routes and is scored separately from C continuity.
+            evidence["reboot_recovery"] = {"scope": "fresh gateway namespace and fresh guard process"}
+            f.create("g2")
+            edge = "g2"
+            r(edge, "sysctl", "-qw", "net.ipv4.ip_forward=0")
+            r("ap", "ip", "link", "del", "trunk")
+            r("w", "ip", "link", "del", "wan0")
+            f.wire("ap", edge, 7, "trunk", "trunk")
+            f.wire(edge, "w", 8, "wan0", "wan0")
+            r("ap", "ip", "link", "set", "trunk", "master", "br0")
+            for vlan in (101, 102):
+                r("ap", "bridge", "vlan", "add", "dev", "trunk", "vid", str(vlan))
+                device = f"guest{vlan}"
+                r(edge, "ip", "link", "add", "link", "trunk", "name", device, "type", "vlan", "id", str(vlan))
+                f.address(edge, device, f"10.77.{vlan}.1/24")
+                r(edge, "ip", "link", "set", device, "up")
+            f.address(edge, "wan0", "203.0.113.1/24")
+            f.address("w", "wan0", "203.0.113.2/24")
+            r("w", "ip", "route", "add", "10.77.0.0/16", "via", "203.0.113.1")
+            for role in ADDRESSES:
+                r(role, "ip", "neigh", "flush", "dev", "eth0")
+            expect("reboot_forwarding_closed_before_policy", "0", r(edge, "sysctl", "-n", "net.ipv4.ip_forward").strip())
+            expect("reboot_c_cannot_forward_before_startup", True, denied_fresh("c"))
+            evidence["reboot_recovery"]["guard_sha256"] = f.program(edge, reconstruct_guard())
+            evidence["reboot_recovery"]["baseline_sha256"] = f.program(edge, rules)
+            expect("reboot_exact_original_baseline", evidence["restart_and_rollback"][-1]["baseline_sha256"],
+                   evidence["reboot_recovery"]["baseline_sha256"])
+            r(edge, "sysctl", "-qw", "net.ipv4.ip_forward=1")
+            for role in ("a", "b"):
+                expect(f"reboot_{role}_fresh_denied", True, denied_fresh(role))
+            recovered_c = f.launch("c", CLIENT)
+            expect("reboot_c_new_connection_ready", "ready", f.line(recovered_c))
+            expect("reboot_c_new_echo", "x", client_action(recovered_c, "echo"))
             ap_state.write_text(json.dumps({"future_admission": "denied", "vlan_credentials": [TARGET["credential"]]}))
             challenge = secrets.token_hex(16)
             future = ap_readback(challenge)
@@ -290,6 +407,14 @@ if __name__ == "__main__":
     if sys.argv[1] == "--ap-readback":
         key, state, nonce = sys.argv[2:]
         print(json.dumps(sign(key, {**TARGET, **json.loads(Path(state).read_text()), "nonce": nonce})))
+    elif sys.argv[1] == "--commit-then-crash":
+        key, target = map(Path, sys.argv[2:])
+        persist(target, sign(key, {**TARGET, "intent": "withdraw"}))
+        os._exit(77)
+    elif sys.argv[1] == "--recover-guard":
+        public, target = map(Path, sys.argv[2:])
+        verify(public, json.loads(target.read_text()), {**TARGET, "intent": "withdraw"})
+        print(guard(True), end="")
     elif sys.argv[1] == "--associate":
         print(json.dumps({"decision": "allowed" if associate(Path(sys.argv[2])) else "denied"}))
     else:
