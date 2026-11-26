@@ -152,9 +152,25 @@ sample ready
 {
   echo 'Local controller probes without API key. Self-signed TLS is fixture-scoped.'
   for path in /api/ping /proxy/network/integration/v1/sites /integration/v1/sites; do
-    printf '%s ' "$path"
-    sudo -n ip netns exec "$ns" curl --noproxy '*' -ksS --max-time 5 --output /dev/null \
-      --write-out '%{http_code}\n' "https://127.0.0.1:11443$path"
+    response=$(mktemp)
+    metadata=$(sudo -n ip netns exec "$ns" curl --noproxy '*' -ksS --max-time 5 --max-filesize 262144 \
+      -H 'Accept: application/json' --output "$response" --write-out '%{http_code}|%{content_type}' \
+      "https://127.0.0.1:11443$path")
+    python3 - "$path" "$metadata" "$response" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+path, metadata, response = sys.argv[1:]
+status, media = metadata.split("|", 1)
+body = Path(response).read_bytes()
+try:
+    value = json.loads(body)
+    shape = sorted(value) if isinstance(value, dict) else type(value).__name__
+except ValueError:
+    shape = "non-json" if body else "empty"
+print(json.dumps({"path": path, "status": int(status), "media": media, "json_shape": shape,
+                  "authenticated": False, "sha256": hashlib.sha256(body).hexdigest()}))
+PY
+    rm -f "$response"
   done
 } | tee "$out/controller-local-api-probe.txt"
 sudo -n systemctl restart "$unit"
