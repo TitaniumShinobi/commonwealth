@@ -45,7 +45,7 @@ class Endpoint:
     def call(self, action, **fields):
         print(json.dumps({"action": action, **fields}), file=self.process.stdin, flush=True)
         answer = json.loads(self.process.stdout.readline())
-        self.events.append({"action": action, **{k: answer[k] for k in ("owner", "lease", "decision")}})
+        self.events.append({"action": action, **{k: answer[k] for k in ("owner", "lease", "decision", "tick")}})
         return answer
 
     def close(self):
@@ -57,14 +57,24 @@ class Endpoint:
 def worker(role):
     lease = None
     slot = None
+    tick = 0
     for line in sys.stdin:
         message = json.loads(line)
         action = message["action"]
         result = {}
         decision = "ok"
-        if action == "reserve" and lease is None:
+        if action == "advance":
+            next_tick = message["tick"]
+            if type(next_tick) is not int or next_tick < tick:
+                decision = "denied"
+            else:
+                tick = next_tick
+                if lease and tick >= lease["expires"]:
+                    lease, slot = None, None
+                    decision = "self_expired"
+        elif action == "reserve" and lease is None:
             lease = {"owner": role, "trial_id": message["trial_id"], "expires": 5}
-        elif action in ("cancel", "expire", "release") and lease:
+        elif action in ("cancel", "release") and lease:
             lease, slot = None, None
         elif lease and action == "bell_measure" and role == "A":
             result = sender(message["state"], message["phase"], message["draw"])
@@ -87,7 +97,7 @@ def worker(role):
             slot = None
         else:
             decision = "denied"
-        print(json.dumps({"owner": role, "lease": lease, "decision": decision, **result}), flush=True)
+        print(json.dumps({"owner": role, "lease": lease, "decision": decision, "tick": tick, **result}), flush=True)
 
 
 def probability(state, axis):
@@ -118,7 +128,17 @@ def trial(run, trial_id, label, mode):
             alice.call("bell_measure", state=label, phase=1, draw=rng.random())
             result["events"] += ["sender_bell_measurement", "bits_withheld", "lease_expired_at_tick_5"]
             terminal = "classical_bits_expired"
-            release = "expire"
+            release = None
+            for endpoint in endpoints:
+                pending = endpoint.call("advance", tick=4)
+                expired = endpoint.call("advance", tick=5)
+                if not pending["lease"] or pending["decision"] != "ok" or expired["lease"] is not None or expired["decision"] != "self_expired":
+                    raise ValueError("endpoint_expiry_invariant")
+            late = bob.call("deliver_quantum_slot", slot=[[1, 0], [0, 0]])
+            late_bits = bob.call("correct_and_measure", classical={"bits": [0, 0]}, seed=SEED, shots=64)
+            late_sender = alice.call("bell_measure", state=label, phase=1, draw=0)
+            if any(row["decision"] != "denied" or row["lease"] is not None for row in (late, late_bits, late_sender)):
+                raise ValueError("late_delivery_was_accepted")
         else:
             shots = 64 // len(phases)
             outputs = []
@@ -146,9 +166,10 @@ def trial(run, trial_id, label, mode):
             result["events"] += ["sender_bell_measurement", "classical_bits_delivered", "recipient_corrected_and_measured"]
             terminal = "measured"
             release = "release"
-        for endpoint in endpoints:
-            if endpoint.call(release)["lease"] is not None:
-                raise ValueError("lease_not_released")
+        if release:
+            for endpoint in endpoints:
+                if endpoint.call(release)["lease"] is not None:
+                    raise ValueError("lease_not_released")
         return {**result, "terminal": terminal, "leases": {},
                 "endpoint_receipts": {endpoint.role: endpoint.events for endpoint in endpoints}}
     finally:

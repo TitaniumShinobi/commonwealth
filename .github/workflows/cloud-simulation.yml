@@ -564,6 +564,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 9175a66ff0af9d7b29c80a5816a6c46ba4b25d0a
+          path: step11-origin-source
+          persist-credentials: false
       - name: Stage browser trust tooling
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
@@ -579,7 +584,8 @@ jobs:
           mkdir -m 700 "$work"
           sudo -n --preserve-env=GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_SHA \
             unshare --mount --propagation private --net -- \
-            bash simulation/step11/run.sh "$work" "$(command -v node)" "$(command -v google-chrome)"
+            bash simulation/step11/run.sh "$work" "$(command -v node)" "$(command -v google-chrome)" \
+              "$GITHUB_WORKSPACE/step11-origin-source"
       - name: Expose bounded Step 11 evidence
         if: always()
         run: |
@@ -590,6 +596,7 @@ jobs:
             cat "$root/trace.ndjson"
           fi
       - name: Preserve Step 11 evidence
+        id: step11_artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -599,3 +606,21 @@ jobs:
             ${{ runner.temp }}/step11/browser.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Re-read Step 11 artifact
+        if: always() && steps.step11_artifact.outcome == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: commonwealth-step-11
+          path: ${{ runner.temp }}/step11-archived
+      - name: Verify archived Step 11 evidence
+        if: always() && steps.step11_artifact.outcome == 'success'
+        env:
+          ARCHIVE_ID: ${{ steps.step11_artifact.outputs.artifact-id }}
+          ARCHIVE_SHA: ${{ steps.step11_artifact.outputs.artifact-digest }}
+        run: |
+          for item in trace.ndjson browser.json; do
+            cmp "$RUNNER_TEMP/step11/$item" "$RUNNER_TEMP/step11-archived/$item"
+            sha256sum "$RUNNER_TEMP/step11-archived/$item"
+          done
+          printf 'Verified artifact %s (%s)\n' "$ARCHIVE_ID" "$ARCHIVE_SHA"

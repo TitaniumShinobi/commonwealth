@@ -69,13 +69,23 @@ try {
   await send("Input.insertText", {text: destination});
   evidence.typed = await value("document.querySelector('#address').value");
   await click("#go");
-  await until(() => value("document.querySelector('h1')?.textContent === 'Simulation'"), "typed navigation failed");
+  await until(() => responses.find(r => r.url === destination + "/" && r.status === 200), "pinned page navigation failed");
+  await until(() => value("location.href === 'https://lab.example/' && document.readyState === 'complete'"), "pinned page not ready");
+  evidence.stock_assets = await value(`(async()=>{const files={};
+    for(const path of ["/","/kit/package/fixtures/conformance.json"]){
+      const response=await fetch(path);
+      if(!response.ok) throw Error("pinned asset HTTP error");
+      const digest=await crypto.subtle.digest("SHA-256", await response.arrayBuffer());
+      files[path]=Array.from(new Uint8Array(digest), b=>b.toString(16).padStart(2,"0")).join("");
+    }
+    return files;})()`);
+  if (!evidence.stock_assets) throw Error("browser could not read pinned assets");
   evidence.denied = await value("fetch('/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trial:'ideal-0'})}).then(r=>r.status)");
   const session = await send("Network.setCookie", {name: "lab_session",
     value: process.env.CW11_BROWSER_SESSION, url: destination, secure: true, httpOnly: true, sameSite: "Strict"});
   if (!session.result?.success) throw Error("fixture browser authorization could not be provisioned");
   for (const trial of ["ideal-0","ideal-1","ideal-2","ideal-3","ideal-4","ideal-5","dephasing","missing","cancelled","unavailable"]) {
-    const url = destination + "/?trial=" + trial;
+    const url = destination + "/quantum?trial=" + trial;
     await send("Page.navigate", {url});
     const response = await until(() => responses.find(r => r.url === url && r.status === 200), trial + " network response");
     await until(() => value("location.href === " + JSON.stringify(url) + " && document.querySelector('#result')?.textContent === ''"),

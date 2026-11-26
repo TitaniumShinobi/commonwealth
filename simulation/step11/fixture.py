@@ -17,6 +17,10 @@ from pathlib import Path
 from bell import STATES, trial
 
 ROOT = Path(sys.argv[1])
+STOCK_SOURCE = Path(sys.argv[4])
+STOCK_REVISION = "9175a66ff0af9d7b29c80a5816a6c46ba4b25d0a"
+STOCK_ROUTES = {"/": "/kit/package/GUIDE.md",
+                "/kit/package/fixtures/conformance.json": "/kit/package/fixtures/conformance.json"}
 RUN = os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]
 HOST = "lab.example"
 TOKEN = secrets.token_urlsafe(32)
@@ -24,7 +28,7 @@ RECEIPTS = []
 lock = threading.Lock()
 PAGE = b"""<!doctype html><html><title>Commonwealth simulation</title>
 <h1>Simulation</h1><button id="run">Run simulation</button><output id="result"></output>
-<script src="/app.js"></script></html>"""
+<script src="/quantum/app.js"></script></html>"""
 ASSET = b"""document.querySelector('#run').onclick = async () => {
 const trial = new URL(location.href).searchParams.get('trial');
 const response = await fetch('/experiment', {method:'POST', headers:{'Content-Type':'application/json',
@@ -87,6 +91,15 @@ class HTTP(http.server.BaseHTTPRequestHandler):
 
 
 class Origin(HTTP):
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/quantum":
+            self.respond(200, PAGE, "text/html")
+        elif path == "/quantum/app.js":
+            self.respond(200, ASSET, "text/javascript")
+        else:
+            self.respond(404, b"", "text/plain")
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         if self.path != "/experiment" or not 0 < length <= 512:
@@ -114,15 +127,15 @@ class Gateway(HTTP):
         for field in ("Cookie", "Content-Type"):
             if self.headers.get(field):
                 headers[field] = self.headers[field]
-        is_asset = self.command == "GET" and self.path.split("?", 1)[0] in ("/", "/app.js")
-        is_api = self.command == "POST" and self.path == "/experiment"
+        path = self.path.split("?", 1)[0]
+        is_asset = self.command == "GET" and path in STOCK_ROUTES
+        is_api = ((self.command == "POST" and path == "/experiment") or
+                  (self.command == "GET" and path in ("/quantum", "/quantum/app.js")))
         if not (is_asset or is_api):
             return self.respond(404, b"", "text/plain")
         port = 8443 if is_asset else origin.server_port
         route = "stock-https" if is_asset else "quantum-api"
-        path = self.path.split("?", 1)[0] if is_asset else self.path
-        if path == "/":
-            path = "/index.html"
+        path = STOCK_ROUTES[path] if is_asset else self.path
         request = http.client.HTTPSConnection("localhost", port, context=origin_trust, timeout=10)
         try:
             request.connect()
@@ -132,7 +145,7 @@ class Gateway(HTTP):
             request.request(self.command, path, body=body, headers=headers)
             upstream = request.getresponse()
             data = upstream.read()
-            note("gateway", ingress=self.headers["Host"], origin="origin.example", origin_port=port, route=route,
+            note("gateway", ingress=self.headers["Host"], origin="origin.example", origin_port=port, route=route, upstream_path=path,
                  origin_certificate_sha256=peer, method=self.command, path=self.path, status=upstream.status,
                  trial_id=identifier, client_port=self.client_address[1], body_sha256=hashlib.sha256(data).hexdigest())
             self.respond(upstream.status, data, upstream.getheader("Content-Type", "application/json"))
@@ -169,13 +182,10 @@ with socketserver.ThreadingUDPServer(("127.0.0.1", 53), DNS) as dns, \
     tls(gateway, "gateway", "gateway")
     for server in (dns, origin, gateway):
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    static = ROOT / "stock-origin"
-    static.mkdir()
-    (static / "index.html").write_bytes(PAGE)
-    (static / "app.js").write_bytes(ASSET)
-    stock = subprocess.Popen(["openssl", "s_server", "-quiet", "-WWW", "-accept", "127.0.0.1:8443",
-                              "-cert", str(ROOT / "origin.pem"), "-key", str(ROOT / "origin.key")],
-                             cwd=static, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    original_assets = {route: {"source_path": source,
+                               "sha256": hashlib.sha256((STOCK_SOURCE / source.lstrip("/")).read_bytes()).hexdigest()}
+                       for route, source in STOCK_ROUTES.items()}
+    note("origin_source", revision=STOCK_REVISION, assets=original_assets)
     try:
         subprocess.run([sys.argv[2], str(Path(__file__).with_name("browser.mjs")), sys.argv[3], str(ROOT), RUN],
                        check=True, timeout=95, env={**os.environ, "CW11_BROWSER_SESSION": TOKEN})
@@ -186,8 +196,13 @@ with socketserver.ThreadingUDPServer(("127.0.0.1", 53), DNS) as dns, \
         require(any(r["layer"] == "tls" and r["role"] == "gateway" and r["sni"] == HOST and r["port"] == 443
                     for r in RECEIPTS), "gateway SNI over TCP 443")
         require(any(r["layer"] == "tls" and r["role"] == "quantum-api" for r in RECEIPTS), "separate API TLS")
-        require(any(r["layer"] == "gateway" and r.get("route") == "stock-https" and r["path"] == "/app.js"
-                    and r["body_sha256"] == hashlib.sha256(ASSET).hexdigest() for r in RECEIPTS), "stock origin asset bytes")
+        for route, asset in original_assets.items():
+            require(browser["stock_assets"][route] == asset["sha256"] and
+                    any(r["layer"] == "gateway" and r.get("route") == "stock-https" and r["path"] == route
+                        and r["upstream_path"] == asset["source_path"] and r["body_sha256"] == asset["sha256"]
+                        for r in RECEIPTS), "pinned browser asset bytes: " + route)
+        require(any(r["layer"] == "gateway" and r.get("route") == "quantum-api" and
+                    r["path"] == "/quantum/app.js" and r["status"] == 200 for r in RECEIPTS), "separate quantum UI asset")
         require(browser["wrong_name"]["error"] == "net::ERR_CERT_COMMON_NAME_INVALID" and
                 any(r["layer"] == "dns" and r["name"] == WRONG_NAME and r["answer"] for r in RECEIPTS) and
                 any(r["layer"] == "tls" and r["sni"] == WRONG_NAME for r in RECEIPTS), "wrong-name DNS and certificate rejection")
@@ -216,7 +231,5 @@ with socketserver.ThreadingUDPServer(("127.0.0.1", 53), DNS) as dns, \
         note("browser_gate", revision=os.environ["GITHUB_SHA"], verdict="PASS",
              scope=["browser_network_fixture", "simulated_quantum_workflow"], trials=len(CASES))
     finally:
-        stock.terminate()
-        stock.wait(timeout=3)
         for server in (dns, origin, gateway):
             server.shutdown()
