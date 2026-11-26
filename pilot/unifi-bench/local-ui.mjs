@@ -71,10 +71,11 @@ try {
   }
   await page.waitForTimeout(2000);
   await snapshot('before fixture key creation');
-  if(!await click(/^(Create API Key|Generate API Key|New API Key)$/i))throw Error('supported Integrations API key control not reached');
+  if(!await click(/^(Create New API Key|Create API Key|Generate API Key|New API Key)$/i))throw Error('supported Integrations API key control not reached');
   await page.waitForTimeout(500);
-  await fill('input[type=text],input:not([type])','Commonwealth disposable fixture');
-  await click(/^(Create|Generate|Create API Key|Generate API Key)$/i);
+  await snapshot('key form');
+  await fill('[role=dialog] input[type=text],[role=dialog] input:not([type])','Commonwealth disposable fixture');
+  await click(/^(Create|Generate|Create New API Key|Create API Key|Generate API Key)$/i);
   await page.waitForTimeout(750);
   // Look only in form controls explicitly marked as API key or in the new-key dialog.
   const key=await page.evaluate(()=>{
@@ -85,6 +86,7 @@ try {
     if(dialog)for(const e of dialog.querySelectorAll('code,pre'))candidates.push(e.textContent.trim());
     return candidates.find(v=>/^[A-Za-z0-9_+\-=/]{24,256}$/.test(v))||null;
   });
+  if(!key)await snapshot('key result controls only');
   if(!key)throw Error('no API key obtained from supported UI controls');
   receipt.fixture_key_provisioned=true;
   receipt.probes=[];
