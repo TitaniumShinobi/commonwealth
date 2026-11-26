@@ -50,20 +50,27 @@ def verify(public, envelope, expected, directory):
                 "-in", message, "-sigfile", signature)
 
 
-def nft_rule(config, block):
+def nft_rule(config, block, lifetime=0):
     iface = config["interface"]
     prefix = str(ipaddress.IPv4Network(config["subnet"]))
-    ingress = f'iifname "{iface}" counter drop\nip daddr {prefix} counter drop' if block else ""
-    forwarding = f'oifname "{iface}" counter drop' if block else ""
+    member = "" if block else f'elements = {{ "{iface}" timeout {lifetime}s }}'
+    reverse = f"ip daddr {prefix} counter drop" if block else ""
     return f"""destroy table inet cw_wifi_guard
 table inet cw_wifi_guard {{
+ set live_vlan {{
+    type ifname; flags timeout;
+    {member}
+ }}
  chain ingress {{
     type filter hook prerouting priority -310; policy accept;
-    {ingress}
+    iifname @live_vlan return
+    iifname "{iface}" counter drop
+    {reverse}
  }}
  chain forwarding {{
     type filter hook forward priority -100; policy accept;
-    {forwarding}
+    oifname @live_vlan return
+    oifname "{iface}" counter drop
  }}
 }}
 """
@@ -97,8 +104,8 @@ def main():
     operator = config["operator_public"]
     ap = config["ap_public"]
     target = {name: config[name] for name in ("edge", "ap", "credential", "generation", "vlan", "interface", "subnet")}
-    def apply(block):
-        script = nft_rule(config, block)
+    def apply(block, lifetime=0):
+        script = nft_rule(config, block, lifetime)
         run("nft", "--check", "-f", "-", text=script)
         run("nft", "-f", "-", text=script)
     def clear():
@@ -139,7 +146,10 @@ def main():
             info = link.get("linkinfo", {})
             if info.get("info_kind") != "vlan" or info["info_data"]["id"] != config["vlan"]:
                 raise ValueError("kernel VLAN mapping mismatch")
-            apply(False)
+            ttl = int(fresh["expires_at"] - time.time()) - 1
+            if ttl < 1:
+                raise ValueError("challenge expired before activation")
+            apply(False, ttl)
         else:
             signed = read(options.approval)
             if fingerprint(operator) != config["operator_key_sha256"]:

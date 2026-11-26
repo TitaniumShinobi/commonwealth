@@ -417,6 +417,20 @@ def run(out):
                              namespace=edge, check=check)
             expect("deployed_service_boot_closed", "completed",
                    json.loads(service_command("boot-closed").stdout)["result"])
+            admit_envelope = work / "service-admit.json"
+            admit_envelope.write_text(json.dumps(sign(operator, {**service_target, "intent": "admit"})))
+            readback_envelope = work / "service-readback.json"
+            service_challenge = json.loads(service_command("challenge").stdout.splitlines()[0])
+            readback_envelope.write_text(json.dumps(sign(ap, {**service_target, **service_challenge,
+                "future_admission": "allowed", "vlan_credentials": [service_target["credential"]]})))
+            expect("deployed_service_authenticates_current_ap_readback", "completed",
+                   json.loads(service_command("admit", "--approval", admit_envelope,
+                                              "--readback", readback_envelope).stdout)["result"])
+            expect("deployed_service_uses_timed_kernel_vlan_membership", True,
+                   'elements = { "guest101" timeout' in r(edge, "nft", "list", "set", "inet", "cw_wifi_guard", "live_vlan"))
+            expect("deployed_service_rejects_replayed_challenge", True,
+                   service_command("admit", "--approval", admit_envelope, "--readback", readback_envelope,
+                                   check=False).returncode != 0)
             signed = work / "service-withdraw.json"
             signed.write_text(json.dumps(sign(operator, {**service_target, "intent": "withdraw"})))
             expect("deployed_service_withdraw", "completed",
