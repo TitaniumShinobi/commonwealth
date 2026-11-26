@@ -17,7 +17,8 @@ CHALLENGE_FIELDS = {"nonce", "epoch", "kind", "expires_at"}
 def issue(target, current_challenge, observe, signing_key):
     if set(target) != set(TARGET_FIELDS) or type(target["generation"]) is not int:
         raise ValueError("invalid guard target")
-    challenge = current_challenge()
+    target = dict(target)
+    challenge = dict(current_challenge())
     if (set(challenge) != CHALLENGE_FIELDS or not re.fullmatch(r"[0-9a-f]{48}", challenge["nonce"])
             or type(challenge["epoch"]) is not int or challenge["epoch"] < 1
             or challenge["kind"] not in ("admit", "renew")
@@ -26,7 +27,7 @@ def issue(target, current_challenge, observe, signing_key):
     started = time.time()
     if started >= challenge["expires_at"]:
         raise ValueError("gateway challenge expired")
-    proof = observe(target, challenge)
+    proof = observe(dict(target), dict(challenge))
     now = time.time()
     if (now >= challenge["expires_at"] or current_challenge() != challenge
             or proof["target"] != target or proof["challenge"] != challenge):
