@@ -59,6 +59,12 @@ jobs:
           podman_version=$(podman --version | awk '{print $3}')
           dpkg --compare-versions "$podman_version" ge 4.9.3
           slirp4netns --version
+      - name: Stage isolated ARM64 browser
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/unifi-ui" --no-audit --no-fund playwright@1.51.1
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/unifi-browsers" \
+            "$RUNNER_TEMP/unifi-ui/node_modules/.bin/playwright" install --with-deps chromium --only-shell
       - name: Attempt isolated controller and wired co-host qualification
         run: |
           set -euo pipefail

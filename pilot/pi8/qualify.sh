@@ -205,3 +205,12 @@ if [[ -n "$controller_cgroup" ]]; then
 fi
 tail -n 27 "$out/resources.txt"
 record "PASS: isolated controller responded to $healthy overlapping health observations"
+
+set +e
+sudo -n ip netns exec "$ns" env PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/unifi-browsers" \
+  "$(command -v node)" "$root/pilot/unifi-bench/local-ui.mjs" "$RUNNER_TEMP/unifi-ui" \
+  "$out/local-ui.json" "$GITHUB_SHA"
+ui_status=$?
+set -e
+record "local_ui_exit=$ui_status"
+exit "$ui_status"
