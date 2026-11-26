@@ -89,7 +89,8 @@ guard_process() {
   (
     cd /
     sudo -n nsenter --net="/run/netns/$ns" -- runuser -u uosserver -- \
-      env XDG_RUNTIME_DIR="/run/user/$controller_uid" podman inspect uosserver \
+      env HOME=/home/uosserver XDG_CONFIG_HOME=/home/uosserver/.config \
+        XDG_RUNTIME_DIR="/run/user/$controller_uid" podman inspect uosserver \
       --format "{{.State.Pid}}"
   ) > "$out/controller-container.pid"
   container_pid=$(cat "$out/controller-container.pid")
