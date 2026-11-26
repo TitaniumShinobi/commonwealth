@@ -20,7 +20,7 @@ Stage `policy.py` and `pilot/activation/edge.py` together in `/usr/local/lib/com
 
 ```bash
 sudo python3 /usr/local/lib/commonwealth/wifi/policy.py boot-closed /etc/commonwealth/wifi.json
-sudo nft list table inet cw_wifi_guard
+sudo nft list tables
 sudo python3 /usr/local/lib/commonwealth/wifi/policy.py challenge /etc/commonwealth/wifi.json
 sudo python3 /usr/local/lib/commonwealth/wifi/policy.py admit /etc/commonwealth/wifi.json \
   --approval /run/commonwealth/admit.json --readback /run/commonwealth/readback.json
@@ -50,7 +50,7 @@ sudo systemd-analyze verify /etc/systemd/system/commonwealth-wifi-{guard,forward
 sudo systemctl daemon-reload
 ```
 
-Review effective sysctl ordering and remove any competing configuration that enables forwarding before the guard. Verify the pinned public keys and exclusive subnet, keep the operator state on persistent storage, and validate that the baseline never flushes `cw_wifi_guard`. After separate activation approval, the dedicated forwarding unit may be started under its hard guard dependency. Record `systemctl status commonwealth-wifi-guard commonwealth-wifi-forward`, `sysctl -n net.ipv4.ip_forward`, and `nft list table inet cw_wifi_guard`. A failed guard must leave forwarding at `0`. The cloud evidence uses an injected guard start failure under the staged unit dependencies in a network namespace.
+Review effective sysctl ordering and remove any competing configuration that enables forwarding before the guard. Verify the pinned public keys and exclusive subnet, keep the operator state on persistent storage, and validate that the baseline never flushes the credential-specific guard table. After separate activation approval, the dedicated forwarding unit may be started under its hard guard dependency. Record `systemctl status commonwealth-wifi-guard commonwealth-wifi-forward`, `sysctl -n net.ipv4.ip_forward`, and `nft list tables`. A failed guard must leave forwarding at `0`. The cloud evidence uses an injected guard start failure under the staged unit dependencies in a network namespace.
 
 For ongoing authorization, run `policy.py renew-challenge /etc/commonwealth/wifi.json`, obtain independently authenticated current AP readback, and run `policy.py renew /etc/commonwealth/wifi.json --approval /run/commonwealth/renew.json --readback /run/commonwealth/readback.json`. Use the exact target fields and `intent: "renew"` for the renewed operator envelope. The AP envelope must bind the newly emitted epoch and nonce. Renew well before expiry. The guard keeps the current kernel allowance during verification. Replayed or invalid renewal cannot extend it. When no timely valid renewal arrives, both directions close at the kernel deadline. Capture fresh probes spanning renewal and expiry, the challenge epochs, kernel set expiration, and unaffected traffic.
 
@@ -59,3 +59,5 @@ For rollback, stop `commonwealth-wifi-forward`, check forwarding is `0`, and res
 ### RADIUS viability
 
 [UniFi documents external RADIUS, dynamic VLAN assignment and accounting](https://help.ui.com/hc/en-us/articles/360015268353-Configuring-a-RADIUS-Server-in-UniFi). A separately approved RADIUS authority could establish authentication and VLAN assignment for an 802.1X session. Accounting can add session observations. Verify the actual AP's applied VLAN and session membership, bounded accounting freshness, reconnect and withdrawal behavior, and independent proof that the VLAN serves only the intended credential. Accounting alone cannot establish the exclusive, current AP evidence this guard requires. Moving from PPSK to 802.1X also changes the participant client requirements. No external RADIUS service, customer AP, or owner-approved adapter was provisioned for this run.
+
+Each credential gets a stable table derived from its edge, AP, credential, VLAN interface and subnet. Set `registry` to a shared private registry directory on the same edge. Registration refuses duplicate interfaces, duplicate VLAN IDs and overlapping subnets. Keep all guard tables and registry records outside baseline rollback. Renewal changes only its live set element in one kernel transaction. The transaction deletes the prior live element and adds the replacement atomically. The cloud race fixture pauses after userspace verification, allows the prior element to expire, then submits the transaction and expects kernel rejection with no resumed traffic.

@@ -10,5 +10,6 @@
   "operator_public": "/etc/commonwealth/operator.pub",
   "ap_public": "/etc/commonwealth/ap.pub",
   "operator_key_sha256": "replace-with-reviewed-sha256",
-  "ap_key_sha256": "replace-with-reviewed-sha256"
+  "ap_key_sha256": "replace-with-reviewed-sha256",
+  "registry": "/var/lib/commonwealth/wifi-registry"
 }

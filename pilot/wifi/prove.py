@@ -11,7 +11,7 @@ from pathlib import Path
 
 from commonwealth_sim.namespace_pilot import Fixture
 from edge import encode, fingerprint, openssl
-from policy import withdraw_transaction
+from policy import table_name, withdraw_transaction
 
 TARGET = {"ap": "fixture-ap", "edge": "fixture-edge", "credential": "shared-guest", "generation": 7,
           "vlan": 101, "stations": ["A", "B"]}
@@ -407,7 +407,7 @@ def run(out):
             service_target = {"edge": "fixture-edge", "ap": "fixture-ap", "credential": "shared-guest",
                               "generation": 7, "vlan": 101, "interface": "guest101", "subnet": "10.77.101.0/24"}
             configuration = work / "deployed-service.json"
-            configuration.write_text(json.dumps({**service_target, "state": str(work / "deployed-state"),
+            configuration.write_text(json.dumps({**service_target, "state": str(work / "deployed-state"), "registry": str(work / "guard-registry"),
                 "operator_public": str(operator_public), "ap_public": str(ap_public),
                 "operator_key_sha256": fingerprint(operator_public), "ap_key_sha256": fingerprint(ap_public)}))
             service = Path(__file__).with_name("policy.py")
@@ -427,7 +427,7 @@ def run(out):
                    json.loads(service_command("admit", "--approval", admit_envelope,
                                               "--readback", readback_envelope).stdout)["result"])
             expect("deployed_service_uses_timed_kernel_vlan_membership", True,
-                   'elements = { "guest101" timeout' in r(edge, "nft", "list", "set", "inet", "cw_wifi_guard", "live_vlan"))
+                   'elements = { "guest101" timeout' in r(edge, "nft", "list", "set", "inet", table_name(service_target), "live_vlan"))
             expect("deployed_service_rejects_replayed_challenge", True,
                    service_command("admit", "--approval", admit_envelope, "--readback", readback_envelope,
                                    check=False).returncode != 0)
@@ -438,7 +438,21 @@ def run(out):
             expect("deployed_service_rejects_post_withdrawal_challenge", True,
                    service_command("challenge", check=False).returncode != 0)
             expect("deployed_service_preserves_unrelated_traffic", "x", client_action(recovered_c, "echo"))
-            evidence["deployed_service_guard"] = r(edge, "nft", "list", "table", "inet", "cw_wifi_guard")
+            evidence["deployed_service_guard"] = r(edge, "nft", "list", "table", "inet", table_name(service_target))
+            r(edge, "nft", "delete", "table", "inet", "wifi_guard")
+            for role in ("a", "b"):
+                expect(role + "_denied_with_only_deployed_guard", True, denied_fresh(role))
+            base_service_config = json.loads(configuration.read_text())
+            collision = {**base_service_config, "credential": "other-credential",
+                         "state": str(work / "overlap-state")}
+            configuration.write_text(json.dumps(collision))
+            expect("same_vlan_subnet_interface_overlap_denied", True,
+                   service_command("boot-closed", check=False).returncode != 0)
+            collision = {**collision, "vlan": 103, "interface": "guest103", "subnet": "10.77.101.128/25"}
+            configuration.write_text(json.dumps(collision))
+            expect("different_vlan_overlapping_subnet_denied", True,
+                   service_command("boot-closed", check=False).returncode != 0)
+            configuration.write_text(json.dumps(base_service_config))
             # Qualify renewal on the actual live C VLAN with a separate operator state.
             renewal_target = {**service_target, "credential": "control-guest", "vlan": 102,
                               "interface": "guest102", "subnet": "10.77.102.0/24"}
@@ -469,9 +483,18 @@ def run(out):
                    fresh["epoch"] > initial["epoch"] and renewed["monotonic_until"] > before_renewal["monotonic_until"])
             expect("same_renewal_replay_rejected", True, apply_lease("renew", check=False).returncode != 0)
             expect("replay_does_not_extend_validity", renewed, json.loads(f.run("cat", str(book)).stdout))
+            for role in ("a", "b"):
+                expect(role + "_still_denied_during_other_credential_renewal", True, denied_fresh(role))
             renewal_files("renew", operator)
             expect("invalid_ap_renewal_rejected", True, apply_lease("renew", check=False).returncode != 0)
             expect("invalid_signature_does_not_extend_validity", renewed, json.loads(f.run("cat", str(book)).stdout))
+            renewal_files("renew", ap)
+            race = f.run("env", f"PYTHONPATH={service.resolve().parent}:{service.resolve().parents[1] / 'activation'}",
+                         sys.executable, str(service.with_name("expiry_race.py")), str(configuration),
+                         str(admit_envelope), str(readback_envelope), namespace=edge)
+            evidence["expiry_race"] = json.loads(race.stdout)
+            expect("kernel_atomic_renewal_rejects_expired_member", True, evidence["expiry_race"]["rejected"])
+            expect("raced_renewal_does_not_extend_validity", renewed, json.loads(f.run("cat", str(book)).stdout))
             time.sleep(max(0, renewed["monotonic_until"] - time.monotonic()) + 2.3)
             renewal_monitor.stdin.write("stop\n")
             renewal_monitor.stdin.flush()
@@ -489,7 +512,10 @@ def run(out):
             signed.write_text(json.dumps(sign(operator, {**renewal_target, "intent": "withdraw"})))
             service_command("withdraw", "--approval", signed)
             expect("revoked_renew_challenge_denied", True, service_command("renew-challenge", check=False).returncode != 0)
-            # Restore the synthetic C segment before the independent startup fault probe.
+            for role in ("a", "b"):
+                expect(role + "_still_denied_after_other_credential_expiry", True, denied_fresh(role))
+            # Restore only the independent C guard in this isolated test.
+            r(edge, "nft", "delete", "table", "inet", table_name(renewal_target))
             configuration.write_text(json.dumps({**renewal_config, **service_target, "state": str(work / "deployed-state")}))
             service_command("boot-closed")
             expect("control_restored_after_expiry_measurement", False, denied_fresh("c"))
@@ -557,7 +583,7 @@ def run(out):
             for role in reversed(f.namespaces):
                 f.run("ip", "netns", "del", f.prefix + role, check=False)
             f.state.cleanup()
-            for directory in ("deployed-state", "renewal-state"):
+            for directory in ("deployed-state", "renewal-state", "guard-registry", "overlap-state"):
                 if (work / directory).exists():
                     f.run("chown", "-R", str(os.getuid()), str(work / directory))
 

@@ -2,6 +2,7 @@
 import argparse
 import fcntl
 import ipaddress
+import hashlib
 import json
 import os
 import re
@@ -64,13 +65,19 @@ def verify(public, envelope, expected, directory):
                 "-in", message, "-sigfile", signature)
 
 
+def table_name(config):
+    identity = {key: config[key] for key in ("edge", "ap", "credential", "vlan", "interface", "subnet")}
+    return "cw_wifi_" + hashlib.sha256(encode(identity)).hexdigest()[:20]
+
+
 def nft_rule(config, block, lifetime=0):
     iface = config["interface"]
+    table = table_name(config)
     prefix = str(ipaddress.IPv4Network(config["subnet"]))
     member = "" if block else f'elements = {{ "{iface}" timeout {lifetime}s }}'
     reverse = f"ip daddr {prefix} counter drop" if block else ""
-    return f"""destroy table inet cw_wifi_guard
-table inet cw_wifi_guard {{
+    return f"""destroy table inet {table}
+table inet {table} {{
  set live_vlan {{
     type ifname; flags timeout;
     {member}
@@ -109,7 +116,28 @@ def main():
     if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,15}", interface):
         raise ValueError("invalid VLAN interface")
     prefix = str(ipaddress.IPv4Network(config["subnet"]))
+    table = table_name(config)
     directory = Path(config["state"])
+    registry = Path(config["registry"])
+    registry.mkdir(exist_ok=True, mode=0o700)
+    if registry.is_symlink() or registry.stat().st_uid != os.geteuid() or registry.stat().st_mode & 0o077:
+        raise ValueError("registry must be private trusted storage")
+    with (registry / "lock").open("a") as registration:
+        fcntl.flock(registration, fcntl.LOCK_EX)
+        description = {"interface": interface, "subnet": prefix, "vlan": config["vlan"],
+                       "state": str(directory.resolve())}
+        for saved in registry.glob("cw_wifi_*.json"):
+            other = read(saved)
+            if saved.stem == table:
+                if other != description:
+                    raise ValueError("credential state path changed")
+                continue
+            if (interface == other["interface"] or config["vlan"] == other["vlan"]
+                    or ipaddress.IPv4Network(prefix).overlaps(ipaddress.IPv4Network(other["subnet"]))):
+                raise ValueError("credential domains overlap")
+        record = registry / (table + ".json")
+        if not record.exists():
+            write_once(record, description)
     directory.mkdir(exist_ok=True, mode=0o700)
     if directory.is_symlink() or directory.stat().st_uid != os.geteuid() or directory.stat().st_mode & 0o077:
         raise ValueError("state must be a private directory owned by the service account")
@@ -137,7 +165,7 @@ def main():
         active = read(lifetime)
         if active["boot_id"] != boot_id or time.monotonic() >= active["monotonic_until"]:
             raise ValueError("prior kernel admission expired")
-        live = run("nft", "list", "set", "inet", "cw_wifi_guard", "live_vlan").stdout
+        live = run("nft", "list", "set", "inet", table, "live_vlan").stdout
         if f'elements = {{ "{interface}" timeout' not in live:
             raise ValueError("no current admission to renew")
     with (directory / "lock").open("a") as lock:
@@ -190,7 +218,12 @@ def main():
             if options.operation == "renew":
                 check_live()
             deadline = time.monotonic() + ttl
-            apply(False, ttl)
+            if options.operation == "renew":
+                transaction = (f'delete element inet {table} live_vlan {{ "{interface}" }}\n'
+                               f'add element inet {table} live_vlan {{ "{interface}" timeout {ttl}s }}\n')
+                run("nft", "-f", "-", text=transaction)
+            else:
+                apply(False, ttl)
             with tempfile.NamedTemporaryFile("w", dir=directory, delete=False) as book:
                 json.dump({"boot_id": boot_id, "monotonic_until": deadline, "epoch": fresh["epoch"]}, book)
                 book.flush()
@@ -208,7 +241,7 @@ def main():
             withdraw_transaction(lambda: apply(True), commit, clear)
             lifetime.unlink(missing_ok=True)
             challenge.unlink(missing_ok=True)
-    print(json.dumps({"edge": config["edge"], "vlan": config["vlan"], "operation": options.operation, "result": "completed"}))
+    print(json.dumps({"edge": config["edge"], "vlan": config["vlan"], "operation": options.operation, "result": "completed", "guard_table": table}))
 
 
 if __name__ == "__main__":
