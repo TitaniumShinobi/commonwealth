@@ -45,7 +45,7 @@ try {
     await page.waitForTimeout(650);
     await snapshot('supported UI step '+turn);
     if(await click(/^(Integrations|API Keys)$/i)) break;
-    if(await click(/^(Proceed Without a UI Account|Settings|Control Plane)$/i)) continue;
+    if(await click(/^(Continue Anyway|Proceed Without a UI Account|Settings|Control Plane)$/i)) continue;
     if(!page.url().includes("/network") && await click(/^(Network|UniFi Network)$/i)) continue;
     if(await click(/^(Integrations|API Keys)$/i)) break;
     if(await click(/^(Advanced Setup|Set Up Offline|Offline Setup|Local Setup|Create Local Account|Use Local Account|Continue Without (a )?UI Account)$/i)) continue;
