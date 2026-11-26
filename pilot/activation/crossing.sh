@@ -3,6 +3,7 @@ set -euo pipefail
 out=$1 src=$2 guest=$3 edge=$4 peer=$5 operator=$6 keys=$7
 g() { sudo -n ip netns exec "$guest" "$@"; }
 e() { sudo -n ip netns exec "$edge" "$@"; }
+p() { sudo -n ip netns exec "$peer" "$@"; }
 public() {
   g env -i PATH=/usr/bin:/bin curl -4 --noproxy '*' --silent --show-error --connect-timeout 4 \
     --max-time 8 --output /dev/null --write-out '%{http_code} %{ssl_verify_result}\n' https://example.com/
@@ -27,12 +28,16 @@ for attempt in {1..30}; do
 done
 grep -qx ready "$out/peer-audit.log"
 for endpoint in 10.231.60.3 10.231.60.4; do
-  e curl -fsS --noproxy '*' --max-time 3 "http://$endpoint:8080/" >> "$out/protected-positive.txt"
+  p curl -fsS --noproxy '*' --max-time 3 "http://$endpoint:8080/" >> "$out/protected-positive.txt"
   if g curl -fsS --noproxy '*' --max-time 2 "http://$endpoint:8080/" >> "$out/protected-deny.txt" 2>&1; then
     exit 1
   fi
 done
 emit 'PASS: guest cannot reach active household and management endpoints'
+mkdir -m 700 "$keys/public"
+printf "guest control\n" > "$keys/public/index.html"
+sudo -n ip netns exec "$guest" python3 -u -m http.server 8087 --bind 10.231.56.50 \
+  --directory "$keys/public" > "$out/guest-listener.log" 2>&1 &
 probe() {
   g curl --silent --show-error --fail --noproxy '*' --max-time 4 \
     --resolve peer.fixture.test:8443:10.231.60.2 --cacert "$keys/ca.pem" \
@@ -47,6 +52,11 @@ e nft --check -f "$out/crossing.nft"
 e nft -f "$out/crossing.nft"
 probe "$url" > "$out/peer-allowed.json"
 grep -F '"record-01":"wired-crossing-fixture"' "$out/peer-allowed.json"
+g curl -fsS --noproxy '*' --retry 3 --retry-connrefused --retry-delay 0 --max-time 3 \
+  http://10.231.56.50:8087/ > "$out/guest-inbound-control.txt"
+grep -x 'guest control' "$out/guest-inbound-control.txt"
+if p curl -fsS --noproxy '*' --max-time 2 http://10.231.56.50:8087/ > "$out/inbound-denied.txt" 2>&1; then exit 1; fi
+emit 'PASS: unrelated inbound TCP denied while authorized crossing responses work'
 if probe https://peer.fixture.test:8443/private > "$out/peer-scope-denial.txt" 2>&1; then exit 1; fi
 grep -F '"decision": "denied"' "$out/peer-audit.log"
 public > "$out/https-during-crossing.txt"

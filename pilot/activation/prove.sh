@@ -178,6 +178,17 @@ sudo -n ip netns exec "$attacker" env -i PATH=/usr/bin:/bin curl -4 --noproxy '*
 e nft list chain inet guest_edge forward > "$out/spoof-edge-counters.txt"
 grep -E 'iifname "lan1".*packets [1-9][0-9]*.*drop' "$out/spoof-edge-counters.txt"
 emit 'PASS: copied IP and MAC denied on a separate wired ingress'
+sudo -n ip -n "$attacker" addr del "$leased/24" dev lan0
+sudo -n ip -n "$attacker" addr add 10.231.59.2/24 dev lan0
+mkdir "$peer_keys/second-guest"
+printf "isolated guest control\n" > "$peer_keys/second-guest/index.html"
+sudo -n ip netns exec "$attacker" python3 -u -m http.server 8086 --bind 10.231.59.2 \
+  --directory "$peer_keys/second-guest" > "$out/other-guest.log" 2>&1 &
+sudo -n ip netns exec "$attacker" curl -fsS --noproxy '*' --retry 3 --retry-connrefused \
+  --max-time 3 http://10.231.59.2:8086/ > "$out/other-guest-positive.txt"
+grep -x 'isolated guest control' "$out/other-guest-positive.txt"
+if g curl -fsS --noproxy '*' --max-time 2 http://10.231.59.2:8086/ > "$out/other-guest-denied.txt" 2>&1; then exit 1; fi
+emit 'PASS: populated second wired guest segment isolated'
 bash "$src/crossing.sh" "$out" "$src" "$guest" "$edge" "$peer" "$operator" "$peer_keys"
 e nft -f "$out/closed.nft"
 deny 'restart from persisted default-closed configuration'
