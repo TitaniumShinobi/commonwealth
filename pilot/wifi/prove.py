@@ -575,7 +575,7 @@ def run(out):
                 evidence["verdict"] = "FAIL"
             raise
         finally:
-            out.write_text(json.dumps({**evidence, "verdict": evidence.get("verdict", "UNVERIFIED")}, indent=2))
+            out.write_text(json.dumps({**evidence, "verdict": evidence.get("verdict", "UNVERIFIED")}, separators=(",", ":")))
             for child in f.children:
                 child.terminate()
             for child in f.children:
