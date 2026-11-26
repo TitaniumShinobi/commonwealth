@@ -34,7 +34,7 @@ try {
         title:document.title,
         headings:[...document.querySelectorAll('h1,h2,h3')].slice(0,16).map(e=>e.innerText.slice(0,100)),
         buttons:[...document.querySelectorAll('button,a')].filter(e=>e.getClientRects().length)
-          .slice(0,30).map(e=>e.innerText.trim().slice(0,100)).filter(Boolean),
+          .slice(0,30).map(e=>(e.innerText.trim()||e.getAttribute('aria-label')||e.getAttribute('title')||e.getAttribute('href')||'').slice(0,100)).filter(Boolean),
         inputs:[...document.querySelectorAll('input')].filter(e=>e.getClientRects().length)
           .map(e=>({name:e.name,placeholder:e.placeholder,type:e.type}))
       })).catch(()=>({})));
@@ -45,6 +45,8 @@ try {
     await page.waitForTimeout(650);
     await snapshot('supported UI step '+turn);
     if(await click(/^(Integrations|API Keys)$/i)) break;
+    const settings=page.locator('a[href*="/settings"],[aria-label="Settings" i],[title="Settings" i]').first();
+    if(page.url().endsWith('/dashboard') && await settings.isVisible()){await settings.click();continue;}
     if(await click(/^(?:Continue Anyway|Go To Dashboard)$/i)) continue;
     if(await click(/^(Proceed Without a UI Account|Settings|Control Plane)$/i)) continue;
     if(!page.url().includes("/network") && await click(/^(Network|UniFi Network)$/i)) continue;
