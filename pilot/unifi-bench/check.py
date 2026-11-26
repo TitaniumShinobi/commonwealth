@@ -280,7 +280,7 @@ def exercise_tagged_flow(root, controller_path, secret_path, case, sent_vlans, e
     return output, config_path
 
 
-def reject_mixed_sessions(controller_config, first, second, *, match_hash=False):
+def reject_mixed_sessions(controller_config, first, second, *, case):
     import sys
 
     first_output, _ = first
@@ -298,15 +298,19 @@ def reject_mixed_sessions(controller_config, first, second, *, match_hash=False)
     bench = json.loads(bench_config_path.read_text())
     identity_mismatches = [row["role"] for row in bench["stations"]
                            if expected_stations[row["client_id"]] != (row["mac"], row["source_ipv4"], row["vlan"])]
-    assert identity_mismatches == (["B"] if match_hash else [])
-    if match_hash:
+    assert identity_mismatches == (["B"] if case == "mixed_station_identity_matching_hash" else [])
+    if case != "mixed_valid_operator_runs":
         # Rebind only the enclosing receipt hash. Preserve the real captures and timestamps.
         tags["controller_receipt_sha256"] = first_hash
         second_tags = second_output / "matching-hash-mixed-tags.json"
         second_tags.write_text(json.dumps(tags))
     first_finished = controller["finished_at"]
     second_capture_start = tags["received_tags"][0]["window_started"]
-    assert 0 <= second_capture_start - first_finished <= 30, "keep both runs within the correlation time bound"
+    age_seconds = second_capture_start - first_finished
+    if case == "mixed_capture_outside_window_matching_hash":
+        assert age_seconds > 30, "capture must exceed the correlation time bound"
+    else:
+        assert 0 <= age_seconds <= 30, "keep both runs within the correlation time bound"
 
     execution = subprocess.run([sys.executable, Path(__file__).with_name("check_receipts.py"),
                                 controller_config, bench_config_path, first_receipt, second_tags],
@@ -317,12 +321,11 @@ def reject_mixed_sessions(controller_config, first, second, *, match_hash=False)
     assert report["tagged_dataplane"]["verdict"] == "PASS", report
     assert report["correlation"]["verdict"] == "UNVERIFIED", report
     assert report["signed_admission"] == "HELD", report
-    case = "mixed_station_identity_matching_hash" if match_hash else "mixed_valid_operator_runs"
     print(json.dumps({"case": case, "exit": execution.returncode, "score": report,
                       "controller_sha256": first_hash,
                       "capture_original_controller_sha256": second_hash,
                       "capture_bound_controller_sha256": tags["controller_receipt_sha256"],
-                      "identity_mismatches": identity_mismatches,
+                      "identity_mismatches": identity_mismatches, "controller_to_capture_seconds": age_seconds,
                       "controller_finished_at": first_finished, "capture_started_at": second_capture_start},
                      sort_keys=True))
 
@@ -371,7 +374,7 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
                                          "all_expected_tags", expected_vlans, expected_tags)
             second = exercise_tagged_flow(root, controller_path, secret_path,
                                           "all_expected_tags_second_run", expected_vlans, expected_tags)
-            reject_mixed_sessions(controller_path, first, second)
+            reject_mixed_sessions(controller_path, first, second, case="mixed_valid_operator_runs")
             station_b = next(row for row in bench_config["stations"] if row["role"] == "B")
             original_mac = station_b["mac"]
             changed_mac = "02:00:00:00:00:12"
@@ -380,7 +383,7 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
                 station_b["mac"] = client_b["macAddress"] = changed_mac
                 changed = exercise_tagged_flow(root, controller_path, secret_path,
                                                "different_b_identity", expected_vlans, expected_tags)
-                reject_mixed_sessions(controller_path, first, changed, match_hash=True)
+                reject_mixed_sessions(controller_path, first, changed, case="mixed_station_identity_matching_hash")
             finally:
                 station_b["mac"] = client_b["macAddress"] = original_mac
             for case, vlans, expected in (
@@ -388,6 +391,11 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
                 ("missing_c", {"A": 101, "B": 101}, [("A", 101), ("B", 101)]),
             ):
                 exercise_tagged_flow(root, controller_path, secret_path, case, vlans, expected)
+            # The two negative captures each spent 15 seconds waiting for an expected frame.
+            # Collect a new valid pair and retain its actual clock readings.
+            late = exercise_tagged_flow(root, controller_path, secret_path,
+                                        "all_expected_tags_later_run", expected_vlans, expected_tags)
+            reject_mixed_sessions(controller_path, first, late, case="mixed_capture_outside_window_matching_hash")
             raise SystemExit(0)
         reports = {}
         for name, credential, configuration, expected_inventory, has_capture in (
