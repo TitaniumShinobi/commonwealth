@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - step-9-independent-setup
+      - step-11-simulated-quantum
     paths:
       - .github/workflows/cloud-simulation.yml
       - kit/package/STEP9.md
+      - simulation/step11/**
 permissions:
   contents: read
   actions: read
@@ -550,4 +552,93 @@ jobs:
               raise SystemExit(0)
           print(f"::error::Step 9 {verdict or 'UNVERIFIED'}")
           raise SystemExit(1 if verdict == "FAIL" else 2)
+          PY
+
+  step-11:
+    if: github.ref_name == 'step-11-simulated-quantum'
+    needs: step-8-consumer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 9175a66ff0af9d7b29c80a5816a6c46ba4b25d0a
+          path: step11-origin-source
+          persist-credentials: false
+      - name: Stage browser trust tooling
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if ! command -v certutil >/dev/null; then
+            sudo -n apt-get install -y libnss3-tools
+          fi
+          node --version
+          google-chrome --version
+          openssl version
+      - name: Run Step 11 in a loopback-only namespace
+        run: |
+          work="$RUNNER_TEMP/step11"
+          mkdir -m 700 "$work"
+          sudo -n --preserve-env=GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_SHA \
+            unshare --mount --propagation private --net -- \
+            bash simulation/step11/run.sh "$work" "$(command -v node)" "$(command -v google-chrome)" \
+              "$GITHUB_WORKSPACE/step11-origin-source"
+      - name: Expose bounded Step 11 evidence
+        if: always()
+        run: |
+          root="$RUNNER_TEMP/step11"
+          if [[ -f "$root/trace.ndjson" ]]; then
+            wc -c "$root/trace.ndjson"
+            test "$(stat -c %s "$root/trace.ndjson")" -le 262144
+            cat "$root/trace.ndjson"
+          fi
+      - name: Preserve Step 11 evidence
+        id: step11_artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: commonwealth-step-11
+          path: |
+            ${{ runner.temp }}/step11/trace.ndjson
+            ${{ runner.temp }}/step11/browser.json
+          if-no-files-found: error
+          retention-days: 14
+
+
+      - name: Re-read and verify archived Step 11 evidence
+        if: always() && steps.step11_artifact.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_ID: ${{ steps.step11_artifact.outputs.artifact-id }}
+          ARCHIVE_SHA: ${{ steps.step11_artifact.outputs.artifact-digest }}
+        run: |
+          root="$RUNNER_TEMP/step11"
+          for attempt in {1..6}; do
+            if curl --fail --silent --show-error --location --max-time 10 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARCHIVE_ID/zip" \
+              -o "$root/archive.zip"; then break; fi
+            if [[ "$attempt" == 6 ]]; then exit 2; fi
+            sleep 2
+          done
+          echo "${ARCHIVE_SHA#sha256:}  $root/archive.zip" | sha256sum --check
+          python3 - "$root" <<'PY'
+          import hashlib, json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          members = ("trace.ndjson", "browser.json")
+          with zipfile.ZipFile(root / "archive.zip") as archive:
+              if sorted(archive.namelist()) != sorted(members):
+                  raise SystemExit("unexpected artifact inventory")
+              hashes = {}
+              for name in members:
+                  saved = archive.read(name)
+                  if saved != (root / name).read_bytes():
+                      raise SystemExit(f"archive member changed: {name}")
+                  hashes[name] = hashlib.sha256(saved).hexdigest()
+          print(json.dumps({"step11_custody": "verified", "artifact": os.environ["ARCHIVE_ID"],
+                            "archive_sha256": os.environ["ARCHIVE_SHA"], "member_sha256": hashes}))
           PY
