@@ -277,6 +277,39 @@ def exercise_tagged_flow(root, controller_path, secret_path, case, sent_vlans, e
                       "case": case, "full_operator_flow": result, "exit": execution.returncode,
                       "sent_frames": sent, "sent_vlans": sent_vlans, "wrong_vlan_witness": wrong_vlan_frame,
                       "capture_blockers": capture["blockers"], "packets": tags}, sort_keys=True))
+    return output, config_path
+
+
+def reject_mixed_sessions(controller_config, first, second):
+    import sys
+
+    first_output, _ = first
+    second_output, bench_config_path = second
+    first_receipt = first_output / "controller-readback.json"
+    second_receipt = second_output / "controller-readback.json"
+    second_tags = second_output / "tagged-bench.json"
+    first_hash = sha256(first_receipt.read_bytes()).hexdigest()
+    second_hash = sha256(second_receipt.read_bytes()).hexdigest()
+    tags = json.loads(second_tags.read_text())
+    assert first_hash != second_hash and tags["controller_receipt_sha256"] == second_hash
+    first_finished = json.loads(first_receipt.read_text())["finished_at"]
+    second_capture_start = tags["received_tags"][0]["window_started"]
+    assert 0 <= second_capture_start - first_finished <= 30, "keep both runs within the correlation time bound"
+
+    execution = subprocess.run([sys.executable, Path(__file__).with_name("check_receipts.py"),
+                                controller_config, bench_config_path, first_receipt, second_tags],
+                               capture_output=True, text=True, check=False, timeout=10)
+    assert execution.returncode == 2, execution.stderr
+    report = json.loads(execution.stdout)
+    assert report["controller_inventory"]["verdict"] == "PASS", report
+    assert report["tagged_dataplane"]["verdict"] == "PASS", report
+    assert report["correlation"]["verdict"] == "UNVERIFIED", report
+    assert report["signed_admission"] == "HELD", report
+    print(json.dumps({"case": "mixed_valid_operator_runs", "exit": execution.returncode, "score": report,
+                      "controller_sha256": first_hash, "capture_bound_controller_sha256": second_hash,
+                      "controller_finished_at": first_finished, "capture_started_at": second_capture_start},
+                     sort_keys=True))
+
 
 
 import sys
@@ -316,8 +349,14 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
         secret_path.touch(mode=0o600)
         if isolated_mode:
             setup_tagged_links()
+            expected_vlans = {"A": 101, "B": 101, "C": 102}
+            expected_tags = list(expected_vlans.items())
+            first = exercise_tagged_flow(root, controller_path, secret_path,
+                                         "all_expected_tags", expected_vlans, expected_tags)
+            second = exercise_tagged_flow(root, controller_path, secret_path,
+                                          "all_expected_tags_second_run", expected_vlans, expected_tags)
+            reject_mixed_sessions(controller_path, first, second)
             for case, vlans, expected in (
-                ("all_expected_tags", {"A": 101, "B": 101, "C": 102}, [("A", 101), ("B", 101), ("C", 102)]),
                 ("wrong_b_and_missing_c", {"A": 101, "B": 999}, [("A", 101)]),
                 ("missing_c", {"A": 101, "B": 101}, [("A", 101), ("B", 101)]),
             ):
