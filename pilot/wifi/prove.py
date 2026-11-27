@@ -17,7 +17,7 @@ TARGET = {"ap": "fixture-ap", "edge": "fixture-edge", "credential": "shared-gues
           "vlan": 101, "stations": ["A", "B"]}
 ADDRESSES = {"a": "10.77.101.20", "b": "10.77.101.21", "c": "10.77.102.20"}
 SERVER = """
-import socket,sys,threading,json
+import socket,sys,threading,json,time
 server=socket.socket()
 server.bind(('203.0.113.2',8090))
 server.listen()
@@ -25,12 +25,17 @@ clients=[]
 received={}
 lock=threading.Lock()
 def loop(client, source):
-    with client:
-        while item:=client.recv(1):
-            with lock:
-                counts=received.setdefault(source,{})
-                marker=item.decode('ascii',errors='replace')
-                counts[marker]=counts.get(marker,0)+1
+    with client, client.makefile('rb') as stream:
+        while item:=stream.read(1):
+            if item in (b'q', b'z'):
+                body=stream.read(48)
+                if len(body)!=48:
+                    return
+                probe_id=body[:32].decode('ascii')
+                sent_ns=int(body[32:],16)
+                with lock:
+                    received.setdefault(probe_id,[]).append(
+                        {'source':source,'sent_monotonic_ns':sent_ns,'received_monotonic_ns':time.monotonic_ns()})
             client.sendall(item)
 def accept():
     while True:
@@ -52,14 +57,27 @@ for line in sys.stdin:
     print(json.dumps(sent),flush=True)
 """
 CLIENT = """
-import socket,sys
+import json,socket,sys,time
 s=socket.create_connection(('203.0.113.2',8090),2)
 s.settimeout(0.7)
 print('ready',flush=True)
 for line in sys.stdin:
+    args=line.split()
+    if args[0] in ('boundary','after'):
+        marker={'boundary':b'q','after':b'z'}[args[0]]
+        sent_ns=time.monotonic_ns()
+        sent=False
+        try:
+            s.sendall(marker+args[1].encode('ascii')+f'{sent_ns:016x}'.encode('ascii'))
+            sent=True
+            reply=s.recv(1).decode() or 'closed'
+        except OSError:
+            reply='blocked'
+        print(json.dumps({'probe_id':args[1],'sent_monotonic_ns':sent_ns,'sendall_completed':sent,
+                          'reply':reply}),flush=True)
+        continue
     try:
-        if line.strip() in ('echo','boundary','after'):
-            s.sendall({'echo':b'x','boundary':b'q','after':b'z'}[line.strip()])
+        if args[0]=='echo': s.sendall(b'x')
         item=s.recv(1)
         print(item.decode() or 'closed',flush=True)
     except OSError:
@@ -195,6 +213,13 @@ def run(out):
             process.stdin.write(action + "\n")
             process.stdin.flush()
             return f.line(process)
+        def timed_probe(role, phase, after_ns):
+            probe_id = secrets.token_hex(16)
+            receipt = json.loads(client_action(guests[role], f"{phase} {probe_id}"))
+            expect(f"{role}_{phase}_probe_sent_in_window", True,
+                   receipt["probe_id"] == probe_id and receipt["sendall_completed"]
+                   and after_ns <= receipt["sent_monotonic_ns"] <= time.monotonic_ns())
+            return receipt
         edge = "g"
         def tracking():
             return r(edge, "conntrack", "-L", "-p", "tcp", "-d", "203.0.113.2", "--dport", "8090")
@@ -297,16 +322,29 @@ def run(out):
             pushed_at_crash = json.loads(client_action(server, "push"))
             expect("origin_wrote_to_both_old_sockets_at_crash_boundary", True,
                    all(pushed_at_crash.get(ADDRESSES[role], 0) >= 1 for role in ("a", "b")))
+            committed_ns = evidence["withdrawal_boundary"]["withdrawal_synced_monotonic_ns"]
+            boundary_probes = {}
             for role in ("a", "b"):
                 expect(role + "_crash_boundary_inbound_blocked", "blocked", client_action(guests[role], "read"))
-                expect(role + "_crash_boundary_outbound_blocked", "blocked", client_action(guests[role], "boundary"))
+                boundary_probes[role] = timed_probe(role, "boundary", committed_ns)
+                expect(role + "_crash_boundary_outbound_blocked", "blocked", boundary_probes[role]["reply"])
             expect("c_crash_boundary_downstream_continues", "p", client_action(guests["c"], "read"))
-            # Count only payloads emitted after the durable boundary. Continuous pre-boundary probes may still drain.
+            control = boundary_probes["c"] = timed_probe("c", "boundary", committed_ns)
+            expect("c_crash_boundary_upstream_continues", "q", control["reply"])
             boundary_receipts = json.loads(client_action(server, "stats"))
             evidence["origin_at_boundary"] = boundary_receipts
-            expect("origin_no_a_or_b_payload_after_commit_before_recovery",
-                   [0, 0],
-                   [boundary_receipts.get(ADDRESSES[x], {}).get("q", 0) for x in ("a", "b")])
+            evidence["boundary_sender_probes"] = boundary_probes
+            control_receipts = boundary_receipts.get(control["probe_id"], [])
+            expect("origin_correlates_c_control_probe", True,
+                   len(control_receipts) == 1 and control_receipts[0]["source"] == ADDRESSES["c"]
+                   and control_receipts[0]["sent_monotonic_ns"] == control["sent_monotonic_ns"]
+                   and control_receipts[0]["received_monotonic_ns"] >= control["sent_monotonic_ns"])
+            expect("origin_no_a_or_b_payload_after_commit_before_recovery", [0, 0],
+                   [len(boundary_receipts.get(boundary_probes[x]["probe_id"], [])) for x in ("a", "b")])
+            recovery_started_ns = time.monotonic_ns()
+            evidence["recovery_started_monotonic_ns"] = recovery_started_ns
+            expect("boundary_probes_preceded_recovery", True,
+                   all(probe["sent_monotonic_ns"] < recovery_started_ns for probe in boundary_probes.values()))
             f.program("g", reconstruct_guard())
             for role in ("a", "b"):
                 r("g", "conntrack", "-D", "-p", "tcp", "-s", ADDRESSES[role], "--dport", "8090")
@@ -321,15 +359,19 @@ def run(out):
             evidence["downstream_origin_send_counts_after_guard"] = pushed_after
             expect("origin_wrote_to_existing_withdrawn_sockets", True,
                    all(pushed_after.get(ADDRESSES[role], 0) >= 1 for role in ("a", "b")))
+            after_probes = {}
             for role in ("a", "b"):
                 expect(f"{role}_downstream_denied_with_association_retained", "blocked", client_action(guests[role], "read"))
-                expect(f"{role}_upstream_denied_with_association_retained", "blocked", client_action(guests[role], "after"))
+                after_probes[role] = timed_probe(role, "after", recovery_started_ns)
+                expect(f"{role}_upstream_denied_with_association_retained", "blocked", after_probes[role]["reply"])
+            evidence["after_recovery_sender_probes"] = after_probes
             for role in ("a", "b"):
                 expect(f"{role}_fresh_flow_denied", True, denied_fresh(role))
             server_after = json.loads(client_action(server, "stats"))
             evidence["origin_after_recovery"] = server_after
             expect("origin_received_no_withdrawn_payload", [0, 0],
-                   [sum(server_after.get(ADDRESSES[x], {}).get(marker, 0) for marker in ("q", "z")) for x in ("a", "b")])
+                   [sum(len(server_after.get(probes[x]["probe_id"], [])) for probes in (boundary_probes, after_probes))
+                    for x in ("a", "b")])
             expect("c_downstream_continues", "p", client_action(guests["c"], "read"))
             expect("c_upstream_continues", "x", client_action(guests["c"], "echo"))
             expect("kernel_ap_assignments_unchanged_eviction_withheld", vlan_table,
@@ -607,7 +649,9 @@ if __name__ == "__main__":
         def commit():
             before = time.monotonic()
             persist(Path(target), sign(Path(key), {**TARGET, "intent": "withdraw"}))
-            persist(Path(boundary), {"deny_ack_at": before, "withdrawal_synced_at": time.monotonic()})
+            synced_ns = time.monotonic_ns()
+            persist(Path(boundary), {"deny_ack_at": before, "withdrawal_synced_at": synced_ns / 1_000_000_000,
+                                     "withdrawal_synced_monotonic_ns": synced_ns})
         withdraw_transaction(deny, commit, lambda: None, lambda: os._exit(77))
     elif sys.argv[1] == "--recover-guard":
         public, target = map(Path, sys.argv[2:])
