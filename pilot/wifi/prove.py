@@ -493,10 +493,11 @@ def run(out):
                     station = {"mac": mac, "ipv4": ip, "vlan": vlan}
                     code = (
                         "import subprocess; "
-                        "capture=subprocess.Popen(" + repr(["tcpdump", "-Q", "in", "-nne", "-l", "-s", "96",
+                        "capture=subprocess.Popen(" + repr(["timeout", "8", "tcpdump", "-Q", "in", "-nne", "-l", "-s", "96",
                             "-c", "1", "-i", "trunk", f"ether src {mac} and vlan {vlan} and ip and src host {ip}"]) +
                         ",stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True); "
-                        "print('ready' if 'listening on trunk' in capture.stderr.readline() else 'unavailable',flush=True); "
+                        "ready=any('listening on trunk' in line for line in capture.stderr); "
+                        "print('ready' if ready else 'unavailable',flush=True); "
                         "print(capture.communicate(timeout=5)[0].strip(),flush=True)"
                     )
                     watcher = f.launch(edge, code)
