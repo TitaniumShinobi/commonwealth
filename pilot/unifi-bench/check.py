@@ -427,6 +427,39 @@ with tempfile.TemporaryDirectory() as path, http.server.ThreadingHTTPServer(("12
         server.shutdown()
         thread.join()
 
+
+# RouterOS registration parser fixture derived from the documented detail layout.
+from routeros_readback import match as match_routeros, registrations
+
+routeros_stations = [
+    {"role": role, "mac": f"02:00:00:00:00:0{index}", "vlan": vlan, "credential_comment": label,
+     "interface": "wifi1", "ssid": "Bench"}
+    for index, (role, vlan, label) in enumerate(zip("ABC", (101, 101, 102), ("shared", "shared", "control")), 1)
+]
+routeros_detail = "Flags: A - AUTHORIZED\n" + "\n".join(
+    f'{index} A ;;; {row["credential_comment"]}\n'
+    f'    interface=wifi1 ssid="Bench" mac-address={row["mac"]}\n'
+    f'    auth-type=wpa2-psk vlan-id={row["vlan"]}'
+    for index, row in enumerate(routeros_stations))
+assert set(match_routeros(routeros_stations, registrations(routeros_detail))) == {"A", "B", "C"}
+routeros_rejected = []
+for name, detail in (
+    ("missing_applied_vlan", routeros_detail.replace(" vlan-id=101", "", 1)),
+    ("wrong_vlan", routeros_detail.replace("vlan-id=101", "vlan-id=999", 1)),
+    ("wrong_comment", routeros_detail.replace(";;; shared", ";;; different", 1)),
+    ("missing_comment", routeros_detail.replace(" ;;; shared", "", 1)),
+    ("duplicate_station", routeros_detail.replace("00:03", "00:02", 1)),
+    ("unauthorized", routeros_detail.replace("0 A", "0  ", 1)),
+):
+    try:
+        match_routeros(routeros_stations, registrations(detail))
+    except ValueError:
+        routeros_rejected.append(name)
+    else:
+        raise AssertionError(name)
+print(json.dumps({"scope": "synthetic RouterOS registration transcript", "registration": "PASS",
+                  "rejected": routeros_rejected, "signed_admission": "HELD"}))
+
 if not isolated_mode:
     import shutil
 
