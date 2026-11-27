@@ -30,3 +30,13 @@ registrations. No guard command is called by this observer.
 
 - [MikroTik PPSK registration example](https://manual.mikrotik.com/docs/wireless/wifi/configuring-ppsk/)
 - [Wi-Fi registration-table CLI reference](https://manual.mikrotik.com/docs/cli-reference/interface/wifi/registration-table/)
+
+## Cloud signer integration
+
+The Wi-Fi Actions fixture feeds RouterOS-formatted synthetic AP records through
+the same registration parser, checks the fixture's nonsecret credential
+inventory, and captures fresh tagged Linux traffic after the gateway challenge.
+The real signer and kernel guard then process the resulting envelope. Wrong
+applied VLAN, conflicting inventory and stale tagged observations are scored
+with the guard still closed. This exercises the chain with synthetic AP trust.
+The physical command continues to hold admission.

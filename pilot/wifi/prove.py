@@ -16,6 +16,7 @@ from policy import table_name, withdraw_transaction
 # The observer and signer are exercised with synthetic AP trust only.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unifi-bench"))
 from signed_readback import apply_observed
+from routeros_readback import match as match_routeros, registrations
 
 
 TARGET = {"ap": "fixture-ap", "edge": "fixture-edge", "credential": "shared-guest", "generation": 7,
@@ -482,14 +483,41 @@ def run(out):
                    (physical.returncode, blocked["signed_admission"], blocked["guard_called"]))
             evidence["physical_admission"] = blocked
 
-            def observe_synthetic_ap(target, challenge):
+            credential_inventory = [
+                {"interface": "wifi-fixture", "group": "bench", "comment": "shared-guest", "vlan": 101},
+                {"interface": "wifi-fixture", "group": "bench", "comment": "control-guest", "vlan": 102},
+            ]
+
+            def observe_synthetic_ap(target, challenge, *, wrong_vlan=False, conflicting=False):
                 observed_table = json.loads(r("ap", "bridge", "-j", "vlan", "show"))
                 membership = {row["ifname"]: [v["vlan"] for v in row["vlans"]] for row in observed_table}
+                expected = []
+                disclosure = ["Flags: A - AUTHORIZED"]
+                for index, role in enumerate(("a", "b", "c")):
+                    profile = credential_inventory[0 if role in ("a", "b") else 1]
+                    mac = json.loads(r(role, "ip", "-j", "link", "show", "dev", "eth0"))[0]["address"]
+                    vlan = membership["station" + role][0]
+                    expected.append({"role": role.upper(), "mac": mac, "vlan": profile["vlan"],
+                                     "credential_comment": profile["comment"],
+                                     "interface": profile["interface"], "ssid": "CW synthetic PPSK"})
+                    if wrong_vlan and role == "b":
+                        vlan = 999
+                    disclosure.extend([f'{index} A ;;; {profile["comment"]}',
+                                       f'    interface={profile["interface"]} ssid="CW synthetic PPSK" mac-address={mac}',
+                                       f'    auth-type=wpa2-psk vlan-id={vlan}'])
+                matched = match_routeros(expected, registrations("\n".join(disclosure)))
+                inventory = list(credential_inventory)
+                if conflicting:
+                    inventory.append({**inventory[0], "comment": "conflicting-credential"})
+                owners = [row["comment"] for row in inventory if row["vlan"] == target["vlan"]]
+                if owners != [target["credential"]]:
+                    raise ValueError("synthetic credential inventory has conflicting VLAN owners")
+
                 stations, tags, frames = {}, {}, {}
                 for role in ("a", "b", "c"):
-                    vlan = membership["station" + role][0]
+                    registration = matched[role.upper()]
+                    mac, vlan = registration["mac"], registration["vlan"]
                     ip = ADDRESSES[role]
-                    mac = json.loads(r(role, "ip", "-j", "link", "show", "dev", "eth0"))[0]["address"]
                     station = {"mac": mac, "ipv4": ip, "vlan": vlan}
                     code = (
                         "import subprocess; "
@@ -511,6 +539,8 @@ def run(out):
                     tags[role.upper()] = {"station": station, "observed_at": time.time()}
                     frames[role.upper()] = frame
                 evidence["synthetic_signer_tagged_frames"] = frames
+                evidence["synthetic_routeros_provider"] = {"scope": "synthetic RouterOS-formatted records, Linux 802.1Q frames",
+                                                          "registrations": matched, "inventory": inventory}
                 return {"target": target, "challenge": challenge, "complete_inventory": True,
                         "authenticated_ap": True, "single_personal_psk": True,
                         "conflicts": [] if all(membership.get("station" + role) == [vlan]
@@ -529,6 +559,25 @@ def run(out):
                                                              table_name(service_target), "live_vlan"))
             else:
                 raise RuntimeError("signer accepted missing observation")
+            stale_proof = observe_synthetic_ap(service_target, read_service_challenge())
+            negative_sources = (
+                ("routeros_wrong_applied_vlan", lambda t, c: observe_synthetic_ap(t, c, wrong_vlan=True), "station B"),
+                ("routeros_conflicting_inventory", lambda t, c: observe_synthetic_ap(t, c, conflicting=True), "conflicting VLAN"),
+                ("routeros_stale_tagged_frames", lambda t, c: {**stale_proof, "challenge": c}, "stale or mismatched tagged"),
+            )
+            evidence["synthetic_routeros_rejections"] = {}
+            for case, observer, error_text in negative_sources:
+                try:
+                    apply_observed(config, admit_envelope, ap, observer, service_command, read_service_challenge)
+                except ValueError as exc:
+                    if error_text not in str(exc):
+                        raise
+                    evidence["synthetic_routeros_rejections"][case] = str(exc)
+                    expect(case + "_leaves_guard_closed", False,
+                           'elements = { "guest101" timeout' in r(edge, "nft", "list", "set", "inet",
+                                                                 table_name(service_target), "live_vlan"))
+                else:
+                    raise RuntimeError(case + " unexpectedly admitted")
             applied, envelope = apply_observed(config, admit_envelope, ap, observe_synthetic_ap, service_command, read_service_challenge)
             readback_envelope.write_text(json.dumps(envelope))
             evidence["synthetic_guard_readback"] = envelope["body"]
