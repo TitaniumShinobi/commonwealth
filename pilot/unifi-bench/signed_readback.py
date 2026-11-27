@@ -61,3 +61,17 @@ def issue(target, current_challenge, observe, signing_key):
     if current_challenge() != challenge or time.time() >= challenge["expires_at"]:
         raise ValueError("gateway challenge changed during signing")
     return {"body": body, "signature": result.stdout.hex()}
+
+def apply_observed(config, approval, signing_key, observe, guard):
+    """Exercise the same challenge and enforcement paths for a trusted AP observer."""
+    target = {name: config[name] for name in TARGET_FIELDS}
+
+    def current_challenge():
+        return json.loads((Path(config["state"]) / "challenge.json").read_text())
+
+    guard("challenge")
+    envelope = issue(target, current_challenge, observe, signing_key)
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "readback.json"
+        path.write_text(json.dumps(envelope))
+        return guard("admit", "--approval", approval, "--readback", path), envelope

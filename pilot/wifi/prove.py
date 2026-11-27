@@ -13,6 +13,11 @@ from commonwealth_sim.namespace_pilot import Fixture
 from edge import encode, fingerprint, openssl
 from policy import table_name, withdraw_transaction
 
+# The observer and signer are exercised with synthetic AP trust only.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unifi-bench"))
+from signed_readback import apply_observed
+
+
 TARGET = {"ap": "fixture-ap", "edge": "fixture-edge", "credential": "shared-guest", "generation": 7,
           "vlan": 101, "stations": ["A", "B"]}
 ADDRESSES = {"a": "10.77.101.20", "b": "10.77.101.21", "c": "10.77.102.20"}
@@ -469,12 +474,62 @@ def run(out):
             admit_envelope = work / "service-admit.json"
             admit_envelope.write_text(json.dumps(sign(operator, {**service_target, "intent": "admit"})))
             readback_envelope = work / "service-readback.json"
-            service_challenge = json.loads(service_command("challenge").stdout.splitlines()[0])
-            readback_envelope.write_text(json.dumps(sign(ap, {**service_target, **service_challenge,
-                "future_admission": "allowed", "vlan_credentials": [service_target["credential"]]})))
+            config = json.loads(configuration.read_text())
+            operator_command = service.resolve().parents[1] / "unifi-bench" / "operator.sh"
+            physical = subprocess.run(["bash", operator_command, "--admit"], capture_output=True, text=True, timeout=5)
+            blocked = json.loads(physical.stdout)
+            expect("physical_admission_requires_supported_ap_provider", (2, "HELD", False),
+                   (physical.returncode, blocked["signed_admission"], blocked["guard_called"]))
+            evidence["physical_admission"] = blocked
+
+            def observe_synthetic_ap(target, challenge):
+                observed_table = json.loads(r("ap", "bridge", "-j", "vlan", "show"))
+                membership = {row["ifname"]: [v["vlan"] for v in row["vlans"]] for row in observed_table}
+                stations, tags, frames = {}, {}, {}
+                for role in ("a", "b", "c"):
+                    vlan = membership["station" + role][0]
+                    ip = ADDRESSES[role]
+                    mac = json.loads(r(role, "ip", "-j", "link", "show", "dev", "eth0"))[0]["address"]
+                    station = {"mac": mac, "ipv4": ip, "vlan": vlan}
+                    code = (
+                        "import subprocess; "
+                        "capture=subprocess.Popen(" + repr(["tcpdump", "-Q", "in", "-nne", "-l", "-s", "96",
+                            "-c", "1", "-i", "trunk", f"ether src {mac} and vlan {vlan} and ip and src host {ip}"]) +
+                        ",stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True); "
+                        "print('ready' if 'listening on trunk' in capture.stderr.readline() else 'unavailable',flush=True); "
+                        "print(capture.communicate(timeout=5)[0].strip(),flush=True)"
+                    )
+                    watcher = f.launch(edge, code)
+                    if f.line(watcher) != "ready":
+                        raise RuntimeError("tagged observer unavailable")
+                    denied_fresh(role)
+                    frame = f.line(watcher)
+                    if f"vlan {vlan}," not in frame or mac not in frame or ip not in frame:
+                        raise ValueError("missing tagged ingress witness")
+                    stations[role.upper()] = station
+                    tags[role.upper()] = {"station": station, "observed_at": time.time()}
+                    frames[role.upper()] = frame
+                evidence["synthetic_signer_tagged_frames"] = frames
+                return {"target": target, "challenge": challenge, "complete_inventory": True,
+                        "authenticated_ap": True, "single_personal_psk": True,
+                        "conflicts": [] if all(membership.get("station" + role) == [vlan]
+                                                for role, vlan in (("a", 101), ("b", 101), ("c", 102)))
+                        else ["unexpected bridge membership"],
+                        **json.loads(ap_state.read_text()), "stations": stations, "tags": tags}
+
+            try:
+                apply_observed(config, admit_envelope, ap, lambda *_: {}, service_command)
+            except KeyError:
+                expect("missing_observation_cannot_open_guard", False,
+                       'elements = { "guest101" timeout' in r(edge, "nft", "list", "set", "inet",
+                                                             table_name(service_target), "live_vlan"))
+            else:
+                raise RuntimeError("signer accepted missing observation")
+            applied, envelope = apply_observed(config, admit_envelope, ap, observe_synthetic_ap, service_command)
+            readback_envelope.write_text(json.dumps(envelope))
+            evidence["synthetic_guard_readback"] = envelope["body"]
             expect("deployed_service_authenticates_current_ap_readback", "completed",
-                   json.loads(service_command("admit", "--approval", admit_envelope,
-                                              "--readback", readback_envelope).stdout)["result"])
+                   json.loads(applied.stdout)["result"])
             expect("deployed_service_uses_timed_kernel_vlan_membership", True,
                    'elements = { "guest101" timeout' in r(edge, "nft", "list", "set", "inet", table_name(service_target), "live_vlan"))
             expect("deployed_service_rejects_replayed_challenge", True,
