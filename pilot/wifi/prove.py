@@ -517,15 +517,18 @@ def run(out):
                         else ["unexpected bridge membership"],
                         **json.loads(ap_state.read_text()), "stations": stations, "tags": tags}
 
+            def read_service_challenge():
+                return json.loads(r(edge, "cat", str(Path(config["state"]) / "challenge.json")))
+
             try:
-                apply_observed(config, admit_envelope, ap, lambda *_: {}, service_command)
+                apply_observed(config, admit_envelope, ap, lambda *_: {}, service_command, read_service_challenge)
             except KeyError:
                 expect("missing_observation_cannot_open_guard", False,
                        'elements = { "guest101" timeout' in r(edge, "nft", "list", "set", "inet",
                                                              table_name(service_target), "live_vlan"))
             else:
                 raise RuntimeError("signer accepted missing observation")
-            applied, envelope = apply_observed(config, admit_envelope, ap, observe_synthetic_ap, service_command)
+            applied, envelope = apply_observed(config, admit_envelope, ap, observe_synthetic_ap, service_command, read_service_challenge)
             readback_envelope.write_text(json.dumps(envelope))
             evidence["synthetic_guard_readback"] = envelope["body"]
             expect("deployed_service_authenticates_current_ap_readback", "completed",

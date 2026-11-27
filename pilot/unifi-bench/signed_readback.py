@@ -62,12 +62,9 @@ def issue(target, current_challenge, observe, signing_key):
         raise ValueError("gateway challenge changed during signing")
     return {"body": body, "signature": result.stdout.hex()}
 
-def apply_observed(config, approval, signing_key, observe, guard):
+def apply_observed(config, approval, signing_key, observe, guard, current_challenge):
     """Exercise the same challenge and enforcement paths for a trusted AP observer."""
     target = {name: config[name] for name in TARGET_FIELDS}
-
-    def current_challenge():
-        return json.loads((Path(config["state"]) / "challenge.json").read_text())
 
     guard("challenge")
     envelope = issue(target, current_challenge, observe, signing_key)
