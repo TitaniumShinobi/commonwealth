@@ -25,5 +25,5 @@ Field acceptance remains `UNVERIFIED` and activation remains `HELD`. Local `/tmp
 
 ## Bounds and cleanup
 
-- Each history is wrapped in `timeout` (default 180s). Suite failures write `stages/history-incomplete.json` and keep partial receipts.
+- Each history is wrapped in `timeout` (default 180s). Observed violations write FAIL (exit 1); timeout/missing evidence write UNVERIFIED (exit 2/124); never map FAIL to incomplete.
 - Fixture cleanup kills only recorded task PIDs and deletes the history’s namespaces. Do not use broad `pkill -f` patterns for `dnsmasq` / `origin.py` / `hold_flow`.

@@ -816,7 +816,7 @@ jobs:
           for item in trace.txt summary.json \
             history-a/trace.txt history-b/trace.txt \
             history-a/stages/history-complete.json history-b/stages/history-complete.json \
-            history-a/stages/history-incomplete.json history-b/stages/history-incomplete.json \
+            history-a/stages/history-outcome.json history-b/stages/history-outcome.json \
             history-a/receipts/diagnostics-verify.json history-b/receipts/diagnostics-verify.json \
             history-a/field-assessment.json history-b/field-assessment.json; do
             if [[ -f "$root/$item" ]]; then

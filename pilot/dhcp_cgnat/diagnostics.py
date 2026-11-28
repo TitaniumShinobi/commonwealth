@@ -22,11 +22,53 @@ def nft_snapshot(namespace: str) -> str:
 
 
 def alive(pid: int) -> bool:
+    # /proc check — os.kill(pid, 0) fails with EPERM on root-owned tcpdump children.
+    return Path(f"/proc/{pid}").exists()
+
+
+def namespace_tcpdump_pids(namespace: str) -> list[int]:
+    """Return tcpdump PIDs living in the fixture netns (not the sudo wrapper)."""
     try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
+        raw = subprocess.check_output(
+            ["sudo", "-n", "ip", "netns", "pids", namespace], text=True
+        )
+    except subprocess.CalledProcessError:
+        return []
+    found: list[int] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.isdigit():
+            continue
+        pid = int(line)
+        try:
+            comm = Path(f"/proc/{pid}/comm").read_text().strip()
+        except OSError:
+            continue
+        if comm == "tcpdump":
+            found.append(pid)
+    return found
+
+
+def signal_pid(pid: int, sig: int) -> None:
+    try:
+        # Prefer killing via sudo so root-owned tcpdump children receive the signal.
+        subprocess.run(["sudo", "-n", "kill", f"-{sig}", str(pid)], check=False)
+    except OSError:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
+
+
+def wait_gone(pids: list[int], seconds: float = 2.0) -> bool:
+    deadline = time.monotonic() + seconds
+    remaining = set(pids)
+    while time.monotonic() < deadline and remaining:
+        remaining = {pid for pid in remaining if alive(pid)}
+        if not remaining:
+            return True
+        time.sleep(0.05)
+    return not any(alive(pid) for pid in pids)
 
 
 def main() -> None:
@@ -66,49 +108,92 @@ def main() -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        # Wait briefly for tcpdump to appear inside the fixture namespace.
+        child_pids: list[int] = []
+        for _ in range(40):
+            child_pids = namespace_tcpdump_pids(args.namespace)
+            if child_pids:
+                break
+            time.sleep(0.05)
+        if not child_pids:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            raise SystemExit("tcpdump did not start inside fixture namespace")
         pid_path.write_text(str(proc.pid))
         meta.write_text(
-            json.dumps({"status": "running", "pid": proc.pid, "mode": "read_only", "child": "tcpdump"})
+            json.dumps(
+                {
+                    "status": "running",
+                    "wrapper_pid": proc.pid,
+                    "tcpdump_pids": child_pids,
+                    "mode": "read_only",
+                    "child": "tcpdump",
+                }
+            )
         )
-        print(json.dumps({"diagnostics": "started", "pid": proc.pid}))
+        print(
+            json.dumps(
+                {
+                    "diagnostics": "started",
+                    "wrapper_pid": proc.pid,
+                    "tcpdump_pids": child_pids,
+                }
+            )
+        )
         return
 
     if args.command == "stop":
-        stopped_confirmed = True
-        pid = None
+        record = json.loads(meta.read_text()) if meta.exists() else {}
+        wrapper_pid = None
         if pid_path.exists():
-            pid = int(pid_path.read_text().strip())
+            wrapper_pid = int(pid_path.read_text().strip())
+        child_pids = list(record.get("tcpdump_pids") or [])
+        # Re-scan namespace so we catch children even if start meta is stale.
+        child_pids = sorted(set(child_pids) | set(namespace_tcpdump_pids(args.namespace)))
+        targets = list(child_pids)
+        if wrapper_pid is not None:
+            targets.append(wrapper_pid)
+        for pid in targets:
             if alive(pid):
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-            for _ in range(40):
-                if not alive(pid):
-                    break
-                time.sleep(0.05)
-            else:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                time.sleep(0.05)
-            stopped_confirmed = not alive(pid)
-            pid_path.unlink(missing_ok=True)
+                signal_pid(pid, signal.SIGTERM)
+        if not wait_gone(targets, 2.0):
+            for pid in targets:
+                if alive(pid):
+                    signal_pid(pid, signal.SIGKILL)
+            wait_gone(targets, 1.0)
+        # Claim requires the actual tcpdump process tree inside the fixture ns to be gone.
+        remaining = namespace_tcpdump_pids(args.namespace)
+        wrapper_alive = bool(wrapper_pid is not None and alive(wrapper_pid))
+        child_stopped_confirmed = not remaining and not wrapper_alive
+        pid_path.unlink(missing_ok=True)
         after.write_text(nft_snapshot(args.namespace))
         meta.write_text(
             json.dumps(
                 {
                     "status": "stopped",
                     "mode": "read_only",
-                    "pid": pid,
-                    "child_stopped_confirmed": stopped_confirmed,
+                    "wrapper_pid": wrapper_pid,
+                    "tcpdump_pids": child_pids,
+                    "remaining_tcpdump_pids": remaining,
+                    "child_stopped_confirmed": child_stopped_confirmed,
                 }
             )
         )
-        if not stopped_confirmed:
-            raise SystemExit("diagnostics child still running")
-        print(json.dumps({"diagnostics": "stopped", "child_stopped_confirmed": True}))
+        if not child_stopped_confirmed:
+            raise SystemExit(
+                f"diagnostics tcpdump still in namespace: remaining={remaining} wrapper_alive={wrapper_alive}"
+            )
+        print(
+            json.dumps(
+                {
+                    "diagnostics": "stopped",
+                    "child_stopped_confirmed": True,
+                    "namespace_tcpdump_gone": True,
+                }
+            )
+        )
         return
 
     if not before.exists() or not after.exists():
@@ -118,11 +203,14 @@ def main() -> None:
     record = json.loads(meta.read_text()) if meta.exists() else {}
     if not record.get("child_stopped_confirmed"):
         raise SystemExit("diagnostics child stop not confirmed")
+    if record.get("remaining_tcpdump_pids"):
+        raise SystemExit("diagnostics tcpdump still recorded in namespace")
     print(
         json.dumps(
             {
                 "diagnostics": "verified_unchanged_forwarding",
                 "child_stopped_confirmed": True,
+                "namespace_tcpdump_gone": True,
                 "capture_bytes": capture.stat().st_size if capture.exists() else 0,
             }
         )

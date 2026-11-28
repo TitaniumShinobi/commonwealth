@@ -27,6 +27,9 @@ isp_dhcp_pid=
 origin_pid=
 mgmt_pid=
 flow_pid=
+# Temporary ISP→guest reverse-enforcement probe route (must be removed before exit).
+reverse_probe_via=
+reverse_probe_dev=
 mkdir -p "$out/receipts" "$out/stages" "$keys"
 : > "$out/trace.txt"
 
@@ -61,8 +64,18 @@ PY
 
 emit() { printf '%s\n' "$*" | tee -a "$out/trace.txt"; }
 
+remove_reverse_probe_route() {
+  # Bounded fixture probe only — never leave an alternate path toward the guest.
+  if [[ -n "${reverse_probe_via:-}" && -n "${reverse_probe_dev:-}" ]]; then
+    sudo -n ip netns exec "$isp" ip route del 10.231.56.0/24 via "$reverse_probe_via" dev "$reverse_probe_dev" 2>/dev/null || true
+    reverse_probe_via=
+    reverse_probe_dev=
+  fi
+}
+
 cleanup() {
   # Scoped cleanup only: recorded PIDs and this history's namespaces. Never pkill -f by name.
+  remove_reverse_probe_route
   local pid
   for pid in "${flow_pid:-}" "${origin_pid:-}" "${guest_dns_pid:-}" "${isp_dhcp_pid:-}" "${mgmt_pid:-}"; do
     if [[ -n "$pid" ]]; then sudo -n kill "$pid" 2>/dev/null || true; fi
@@ -180,8 +193,11 @@ NFT
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$keys/origin.key" -out "$keys/origin.pem" \
   -subj '/CN=origin.fixture.test' \
   -addext 'subjectAltName=DNS:origin.fixture.test,DNS:*.fixture.test' 2>/dev/null
+sudo -n install -m 666 /dev/null "$out/receipts/echo-audit.ndjson"
+sudo -n install -m 666 /dev/null "$out/receipts/echo-control.txt"
 o python3 -u "$src/origin.py" --cert "$keys/origin.pem" --key "$keys/origin.key" \
   --query-log "$out/receipts/dns-queries.ndjson" --nonce-log "$out/receipts/tls-nonces.ndjson" \
+  --echo-audit "$out/receipts/echo-audit.ndjson" --echo-control "$out/receipts/echo-control.txt" \
   > "$out/origin.log" 2>&1 &
 origin_pid=$!
 for _ in {1..40}; do
@@ -279,13 +295,124 @@ wan_dhcp() {
   grep -E '"event":"(bound|renew)"' "$log"
 }
 
-withhold_on() {
+withhold_dns_only() {
   i nft flush chain inet cgnat withhold
   i nft add rule inet cgnat withhold iifname '"edge0"' udp dport 53 counter drop
   i nft add rule inet cgnat withhold iifname '"edge0"' tcp dport 53 counter drop
+}
+withhold_tls_only() {
+  i nft flush chain inet cgnat withhold
   i nft add rule inet cgnat withhold iifname '"edge0"' tcp dport 443 counter drop
 }
 withhold_off() { i nft flush chain inet cgnat withhold; }
+
+fail() { emit "FAIL[$mode]: $*"; exit 1; }
+unverified() { emit "UNVERIFIED[$mode]: $*"; exit 2; }
+
+# Denial must be observed via real executables under timeout — never wrap shell functions.
+# Exit taxonomy: python OSError/timeout=denial OK; 0=success=FAIL; 127=launcher=UNVERIFIED.
+observe_new_echo_denied() {
+  local status=0
+  set +e
+  timeout --foreground 5s sudo -n ip netns exec "$guest" env -i PATH=/usr/bin:/bin \
+    python3 -c "
+import socket, ssl, sys
+ctx = ssl.create_default_context(cafile='$keys/origin.pem')
+sock = socket.socket(); sock.settimeout(1.5)
+try:
+    sock.connect(('$origin_ip', 8443))
+    tls = ctx.wrap_socket(sock, server_hostname='denied.fixture.test')
+    tls.settimeout(1.5)
+    tls.sendall(b'Cdenyx')
+    data = tls.recv(6)
+    sys.exit(0 if data else 1)
+except OSError:
+    sys.exit(1)
+"
+  status=$?
+  set -e
+  if [[ "$status" -eq 0 ]]; then
+    fail "new protected echo succeeded after revoke"
+  fi
+  if [[ "$status" -eq 127 ]]; then
+    unverified "echo-denial launcher/setup error status=127"
+  fi
+  if [[ "$status" -ne 1 && "$status" -ne 124 ]]; then
+    fail "unexpected echo-denial status=$status"
+  fi
+}
+
+counter_packets() {
+  # Extract first packets N from an nft rule line matching pattern.
+  local file=$1 pattern=$2
+  python3 - "$file" "$pattern" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+pat = sys.argv[2]
+for line in text.splitlines():
+    if re.search(pat, line):
+        match = re.search(r"packets ([0-9]+)", line)
+        if match:
+            print(match.group(1))
+            raise SystemExit(0)
+print(0)
+PY
+}
+
+wait_probe_result() {
+  local probe_id=$1 want_file=$2
+  local deadline=$((SECONDS + 6))
+  while (( SECONDS < deadline )); do
+    if python3 - "$out/receipts/flow.log" "$probe_id" "$want_file" <<'PY'
+import json, sys
+from pathlib import Path
+path, probe_id, want = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+latest = None
+for line in path.read_text().splitlines():
+    if not line.startswith("{"):
+        continue
+    row = json.loads(line)
+    if row.get("probe_id") == probe_id and "client_sent" in row:
+        latest = row
+if latest is None:
+    raise SystemExit(1)
+want.write_text(json.dumps(latest) + "\n")
+PY
+    then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_push_result() {
+  local probe_id=$1 want_file=$2
+  local deadline=$((SECONDS + 6))
+  while (( SECONDS < deadline )); do
+    if python3 - "$out/receipts/flow.log" "$probe_id" "$want_file" <<'PY'
+import json, sys
+from pathlib import Path
+path, probe_id, want = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+latest = None
+for line in path.read_text().splitlines():
+    if not line.startswith("{"):
+        continue
+    row = json.loads(line)
+    if row.get("probe_id") == probe_id and row.get("kind") == "wait_push":
+        latest = row
+if latest is None:
+    raise SystemExit(1)
+want.write_text(json.dumps(latest) + "\n")
+PY
+    then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
 
 read_carrier() {
   local tag=$1
@@ -326,9 +453,18 @@ PY
 }
 
 dns_fail() {
-  local stage=$1 name=$2
-  if g env -i PATH=/usr/bin:/bin getent ahostsv4 "$name" > "$out/receipts/dns-$stage.txt" 2>"$out/receipts/dns-$stage.err"; then
+  local stage=$1 name=$2 status=0
+  set +e
+  g env -i PATH=/usr/bin:/bin getent ahostsv4 "$name" \
+    > "$out/receipts/dns-$stage.txt" 2>"$out/receipts/dns-$stage.err"
+  status=$?
+  set -e
+  # 0 = resolved (criterion violated). 127 = launcher/setup (never denial).
+  if [[ "$status" -eq 0 ]]; then
     return 1
+  fi
+  if [[ "$status" -eq 127 ]]; then
+    unverified "dns-fail launcher/setup error status=127 stage=$stage"
   fi
   return 0
 }
@@ -357,12 +493,20 @@ PY
 }
 
 tls_fail() {
-  local stage=$1 name=$2
-  if g env -i PATH=/usr/bin:/bin curl -4 --noproxy '*' --silent --show-error \
+  local stage=$1 name=$2 status=0
+  set +e
+  g env -i PATH=/usr/bin:/bin curl -4 --noproxy '*' --silent --show-error \
     --cacert "$keys/origin.pem" --connect-timeout 2 --max-time 4 \
     --output "$out/receipts/tls-$stage.body" "https://$name/" \
-    > "$out/receipts/tls-$stage.meta" 2>"$out/receipts/tls-$stage.err"; then
+    > "$out/receipts/tls-$stage.meta" 2>"$out/receipts/tls-$stage.err"
+  status=$?
+  set -e
+  # 0 = TLS succeeded (criterion violated). 127 = launcher/setup (never denial).
+  if [[ "$status" -eq 0 ]]; then
     return 1
+  fi
+  if [[ "$status" -eq 127 ]]; then
+    unverified "tls-fail launcher/setup error status=127 stage=$stage"
   fi
   return 0
 }
@@ -446,17 +590,26 @@ unaffected_tls path1 "$(unique_name una1)"
 guest_mgmt_deny path1
 receipt path-established PASS "dns_name=$name_ok1" "tls_nonce=$nonce1"
 
-# lease-before-recovery: withhold at carrier after lease+admit+working path
-withhold_on
-name_hold=$(unique_name withhold)
-dns_fail lease-before-recovery "$name_hold"
-tls_fail lease-before-recovery "$name_hold"
+# lease-before-recovery split: DNS-only withhold, then TLS-only withhold (DNS works).
 e ip -4 addr show wan0 | grep -F '100.64.10.50'
-read_carrier lease-before-recovery
-grep -E 'udp dport 53.*packets [1-9]|tcp dport 443.*packets [1-9]|dport 53 counter packets [1-9]|dport 443 counter packets [1-9]' \
-  "$out/receipts/withhold-lease-before-recovery.txt"
-receipt lease-before-recovery PASS "dns_failed=true" "tls_failed=true" "wan_lease=present" "carrier_withhold=true"
-emit "PASS[$mode]: lease-before-recovery DNS and TLS fail at carrier withhold"
+withhold_dns_only
+name_dns=$(unique_name dnshold)
+dns_fail withhold-dns "$name_dns" || fail "DNS succeeded during DNS-only withhold"
+read_carrier withhold-dns
+dns_pkts=$(counter_packets "$out/receipts/withhold-withhold-dns.txt" 'udp dport 53')
+test "$dns_pkts" -ge 1 || fail "DNS withhold counter did not increase ($dns_pkts)"
+receipt withhold-dns PASS "dns_failed=true" "dns_drop_packets=$dns_pkts"
+emit "PASS[$mode]: DNS-only withhold fails DNS with matching counter"
+
+withhold_tls_only
+name_tls=$(unique_name tlshold)
+dns_ok withhold-tls-dns "$name_tls" || fail "DNS failed during TLS-only withhold"
+tls_fail withhold-tls "$name_tls" || fail "TLS succeeded during TLS-only withhold"
+read_carrier withhold-tls
+tls_pkts=$(counter_packets "$out/receipts/withhold-withhold-tls.txt" 'tcp dport 443')
+test "$tls_pkts" -ge 1 || fail "TLS withhold counter did not increase ($tls_pkts)"
+receipt withhold-tls PASS "dns_ok=true" "tls_failed=true" "tls_drop_packets=$tls_pkts"
+emit "PASS[$mode]: TLS-only withhold fails TLS after working DNS; counters match"
 withhold_off
 
 # Usable recovery: fresh unique DNS + new TLS nonce through carrier (no --resolve, no cache)
@@ -519,38 +672,58 @@ name_flow=$(unique_name flow)
 dns_ok flow "$name_flow"
 rm -f "$out/receipts/flow.cmd"
 mkfifo "$out/receipts/flow.cmd"
-# Hold open TLS session (original association identity). Writer fd opened after start.
-g env -i PATH=/usr/bin:/bin python3 -u "$src/hold_flow.py" --host "$name_flow" --ca "$keys/origin.pem" \
-  --status "$out/receipts/flow-status.json" > "$out/receipts/flow.log" 2>&1 < "$out/receipts/flow.cmd" &
+sudo -n ip netns exec "$guest" env -i PATH=/usr/bin:/bin python3 -u "$src/hold_flow.py" \
+  --host "$name_flow" --ca "$keys/origin.pem" --status "$out/receipts/flow-status.json" \
+  --audit "$out/receipts/echo-audit.ndjson" \
+  > "$out/receipts/flow.log" 2>&1 < "$out/receipts/flow.cmd" &
 flow_pid=$!
 exec 9>"$out/receipts/flow.cmd"
 for _ in {1..50}; do
   if grep -qx ready "$out/receipts/flow.log" 2>/dev/null; then break; fi
   sleep 0.1
 done
-grep -qx ready "$out/receipts/flow.log"
-printf 'probe\n' >&9
-for _ in {1..30}; do
-  if grep -F '"sent": true' "$out/receipts/flow.log" 2>/dev/null; then break; fi
-  sleep 0.1
-done
-grep -F '"sent": true' "$out/receipts/flow.log"
-grep -F '"recv": true' "$out/receipts/flow.log"
-receipt protected-flow-open PASS "host=$name_flow"
+grep -qx ready "$out/receipts/flow.log" || unverified "held flow failed to become ready"
+printf 'probe p001\n' >&9
+wait_probe_result p001 "$out/receipts/probe-p001.json" || unverified "missing fresh probe p001"
+python3 - "$out/receipts/probe-p001.json" <<'PY'
+import json, sys
+row = json.load(open(sys.argv[1]))
+assert row["client_sent"] and row["client_recv"] and row["server_recv"], row
+PY
+# Server reverse heartbeat while path is good
+printf 'push h001\n' >> "$out/receipts/echo-control.txt"
+printf 'wait_push h001\n' >&9
+wait_push_result h001 "$out/receipts/push-h001.json" || unverified "missing push h001 result"
+python3 - "$out/receipts/push-h001.json" <<'PY'
+import json, sys
+row = json.load(open(sys.argv[1]))
+assert row["client_recv"] is True, row
+PY
+receipt protected-flow-open PASS "host=$name_flow" "probe=p001" "push=h001"
 
-# Sole uplink down while flow exists
+# Snapshot pre-outage carrier NAT / echo mappings (boundary evidence, not a continuity claim).
+e conntrack -L -p tcp -s "$leased" --dport 8443 > "$out/receipts/ct-echo-before-outage.txt" 2>/dev/null || true
+i conntrack -L -p tcp --dport 8443 > "$out/receipts/ct-isp-echo-before-outage.txt" 2>/dev/null || true
+ct_echo_before=$(wc -l < "$out/receipts/ct-echo-before-outage.txt" | tr -d ' ')
+
+# Sole uplink down. Client hold process may retain its FD; provider handoff may
+# interrupt the end-to-end TLS/NAT path — do not claim session continuity.
 i ip link set pub0 down
 mgmt_ok during-outage
 guest_mgmt_deny during-outage
 name_out=$(unique_name outage)
-dns_fail outage "$name_out"
-tls_fail outage "$name_out"
-# Isolation still denies spoofed ingress
+dns_fail outage "$name_out" || fail "DNS succeeded during sole-uplink outage"
+tls_fail outage "$name_out" || fail "TLS succeeded during sole-uplink outage"
 sudo -n ip netns exec "$attacker" env -i PATH=/usr/bin:/bin curl -4 --noproxy '*' --silent \
-  --cacert "$keys/origin.pem" --max-time 2 "https://$name_flow/" >"$out/receipts/spoof-outage.txt" 2>&1 && exit 1
-receipt sole-uplink-outage PASS "mgmt=ok" "guest_mgmt=denied" "dns_failed=true" "tls_failed=true"
+  --cacert "$keys/origin.pem" --max-time 2 "https://$name_flow/" >"$out/receipts/spoof-outage.txt" 2>&1 \
+  && fail "attacker reached origin during outage"
+kill -0 "$flow_pid" 2>/dev/null || fail "held flow process exited before revoke"
+receipt sole-uplink-outage PASS \
+  "mgmt=ok" "guest_mgmt=denied" "dns_failed=true" "tls_failed=true" \
+  "hold_process_alive=true" "e2e_tls_continuity=not_claimed"
 
-# Revoke while uplink down; keep session identity; clear conntrack
+# Revoke while uplink down; clear HTTPS mappings. Echo mappings may already be
+# gone from carrier reset — record that boundary separately after recovery.
 python3 "$act/edge.py" approve "$out/target.json" withdraw "$operator/operator.key" > "$out/withdrawal.json"
 python3 "$act/edge.py" record-session "$out/target.json" "$out/withdrawal.json" "$operator/operator.pub" "$operator"
 python3 "$act/edge.py" guard "$out/target.json" "$operator/operator.pub" "$operator" > "$out/withdrawn-guard.nft"
@@ -558,76 +731,120 @@ e nft -f "$out/withdrawn-guard.nft"
 python3 "$act/edge.py" render "$out/target.json" withdraw "$out/withdrawal.json" "$operator/operator.pub" > "$out/withdrawn.nft"
 e nft -f "$out/withdrawn.nft"
 apply_fixture_input
-# Echo forward may be absent after withdraw render; revocation guard covers both directions.
-e conntrack -D -s "$leased" >/dev/null 2>&1 || true
-e conntrack -D -d "$leased" >/dev/null 2>&1 || true
-printf 'probe\n' >&9
-for _ in {1..30}; do
-  if python3 - "$out/receipts/flow.log" <<'PY'
-import json, sys
-from pathlib import Path
-probes = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines() if line.startswith("{")]
-sys.exit(0 if probes and probes[-1].get("recv") is False else 1)
-PY
-  then break; fi
-  sleep 0.1
-done
-python3 - "$out/receipts/flow.log" <<'PY'
-import json, sys
-from pathlib import Path
-probes = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines() if line.startswith("{")]
-if not probes or probes[-1].get("recv") is not False:
-    raise SystemExit(f"expected reverse direction stopped during outage revoke: {probes[-1] if probes else None}")
-print(json.dumps({"flow_reverse": "stopped", "last": probes[-1]}))
-PY
-receipt revoke-during-outage PASS "flow_reverse_stopped=true"
+e conntrack -D -s "$leased" -p tcp --dport 443 >/dev/null 2>&1 || true
+e conntrack -D -d "$leased" -p tcp --sport 443 >/dev/null 2>&1 || true
+e nft list chain inet guest_revocation ingress > "$out/receipts/revocation-ingress-before.txt"
+e nft list chain inet guest_revocation replies > "$out/receipts/revocation-replies-before.txt"
+ingress_before=$(counter_packets "$out/receipts/revocation-ingress-before.txt" "ip saddr $leased")
+replies_before=$(counter_packets "$out/receipts/revocation-replies-before.txt" "ip daddr $leased")
+receipt revoke-during-outage PASS \
+  "hold_process_alive=true" "e2e_tls_continuity=not_claimed" \
+  "ingress_before=$ingress_before" "replies_before=$replies_before"
 
-# DHCP handoff / uplink recovery; revoked denial retained for both directions + new flows
+# DHCP handoff / uplink recovery. Observe NAT mapping loss as its own boundary.
 i ip link set pub0 up
 wan_dhcp post-outage || wan_dhcp post-outage-retry
-# Held flow after recovery: neither direction remains usable.
-for _ in 1 2 3 4 5; do printf 'probe\n' >&9; sleep 0.15; done
-python3 - "$out/receipts/flow.log" <<'PY'
+e conntrack -L -p tcp -s "$leased" --dport 8443 > "$out/receipts/ct-echo-after-recovery.txt" 2>/dev/null || true
+i conntrack -L -p tcp --dport 8443 > "$out/receipts/ct-isp-echo-after-recovery.txt" 2>/dev/null || true
+ct_echo_after=$(wc -l < "$out/receipts/ct-echo-after-recovery.txt" | tr -d ' ')
+nat_mapping_lost=false
+if [[ "$ct_echo_before" -gt 0 && "$ct_echo_after" -eq 0 ]]; then
+  nat_mapping_lost=true
+elif [[ "$ct_echo_after" -lt "$ct_echo_before" ]]; then
+  nat_mapping_lost=true
+elif [[ ! -s "$out/receipts/ct-echo-after-recovery.txt" ]]; then
+  # Carrier reset / handoff with no surviving echo mapping.
+  nat_mapping_lost=true
+fi
+receipt nat-mapping-loss PASS \
+  "ct_echo_before=$ct_echo_before" "ct_echo_after=$ct_echo_after" \
+  "nat_mapping_lost=$nat_mapping_lost" "e2e_tls_continuity=not_claimed"
+emit "PASS[$mode]: observed NAT mapping boundary lost=$nat_mapping_lost (no invented session continuity)"
+
+# Held-socket probes: no disclosure either direction (independent of NAT survival).
+printf 'probe fbdn\n' >&9
+wait_probe_result fbdn "$out/receipts/probe-fbdn.json" || unverified "missing fresh post-recovery probe fbdn"
+python3 - "$out/receipts/probe-fbdn.json" "$out/receipts/echo-audit.ndjson" <<'PY'
 import json, sys
 from pathlib import Path
-probes = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines() if line.startswith("{")]
-if len(probes) < 2:
-    raise SystemExit("missing post-recovery flow probes")
-last = probes[-1]
-if last.get("sent") and last.get("recv"):
-    raise SystemExit(f"held flow still bidirectional after recovery revoke: {last}")
-print(json.dumps({"held_flow_after_recovery": last}))
+row = json.load(open(sys.argv[1]))
+if row.get("client_recv"):
+    raise SystemExit(f"forbidden client_recv after revoke: {row}")
+audit = Path(sys.argv[2]).read_text()
+if any(json.loads(line).get("probe_id") == "fbdn" and json.loads(line).get("kind") == "server_recv"
+       for line in audit.splitlines() if line.strip()):
+    raise SystemExit("forbidden server_recv of probe fbdn after revoke")
+if row.get("server_recv"):
+    raise SystemExit(f"forbidden server_recv flag after revoke: {row}")
+print(json.dumps({"post_recovery_probe": row, "e2e_tls_continuity": "not_claimed"}))
 PY
+printf 'push hbdn\n' >> "$out/receipts/echo-control.txt"
+printf 'wait_push hbdn\n' >&9
+wait_push_result hbdn "$out/receipts/push-hbdn.json" || unverified "missing fresh push hbdn result"
+python3 - "$out/receipts/push-hbdn.json" <<'PY'
+import json, sys
+row = json.load(open(sys.argv[1]))
+if row.get("client_recv"):
+    raise SystemExit(f"forbidden reverse payload after revoke: {row}")
+print(json.dumps({"held_push_no_client_recv": row, "e2e_tls_continuity": "not_claimed"}))
+PY
+# Forward-direction enforcement: ingress drop counters must increase from guest attempts.
+e nft list chain inet guest_revocation ingress > "$out/receipts/revocation-ingress-mid.txt"
+ingress_mid=$(counter_packets "$out/receipts/revocation-ingress-mid.txt" "ip saddr $leased")
+# If held-socket send did not yet bump the counter, drive an explicit forward attempt.
+if [[ "$ingress_mid" -le "$ingress_before" ]]; then
+  observe_new_echo_denied
+  e nft list chain inet guest_revocation ingress > "$out/receipts/revocation-ingress-mid.txt"
+  ingress_mid=$(counter_packets "$out/receipts/revocation-ingress-mid.txt" "ip saddr $leased")
+fi
+test "$ingress_mid" -gt "$ingress_before" || fail "ingress drop counter did not increase ($ingress_before -> $ingress_mid)"
+
+# Reverse-direction enforcement: distinct bounded FIXTURE probe (not a claim that the
+# original TLS session traversed carrier NAT after reset). Temporary ISP→guest route
+# exists only for this probe and is removed immediately — no alternate public egress.
+edge_wan=$(e ip -4 -o addr show wan0 | awk '{print $4}' | cut -d/ -f1 | head -n1)
+test -n "$edge_wan" || unverified "missing edge wan address for fixture reverse probe"
+reverse_probe_via=$edge_wan
+reverse_probe_dev=edge0
+i ip route replace 10.231.56.0/24 via "$reverse_probe_via" dev "$reverse_probe_dev"
+i python3 - "$leased" <<'PY'
+import socket, sys
+guest = sys.argv[1]
+for _ in range(4):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(b"FIXR", (guest, 39999))
+    finally:
+        sock.close()
+PY
+e nft list chain inet guest_revocation replies > "$out/receipts/revocation-replies-after.txt"
+replies_after=$(counter_packets "$out/receipts/revocation-replies-after.txt" "ip daddr $leased")
+remove_reverse_probe_route
+# Confirm the temporary probe route is gone (no alternate path left behind).
+if i ip route show 10.231.56.0/24 | grep -q .; then
+  fail "fixture reverse-probe route still present after cleanup"
+fi
+test "$replies_after" -gt "$replies_before" || fail "replies drop counter did not increase ($replies_before -> $replies_after)"
+receipt fixture-reverse-enforcement PASS \
+  "kind=bounded_fixture_probe" "not_original_tls_session=true" \
+  "replies_drops=$replies_before>$replies_after" "probe_route_removed=true"
+
+e nft list chain inet guest_revocation ingress > "$out/receipts/revocation-ingress-after.txt"
+ingress_after=$(counter_packets "$out/receipts/revocation-ingress-after.txt" "ip saddr $leased")
 name_new=$(unique_name postrevoke)
 dns_ok post-revoke-dns "$name_new" || dns_fail post-revoke-dns "$name_new"
-tls_fail post-revoke-new "$name_new"
-# New protected echo also denied (bounded; do not hang on dropped SYN).
-if timeout --foreground 5s g env -i PATH=/usr/bin:/bin python3 -c "
-import socket, ssl, sys
-ctx = ssl.create_default_context(cafile='$keys/origin.pem')
-sock = socket.socket(); sock.settimeout(1.5)
-try:
-    sock.connect(('$origin_ip', 8443))
-    tls = ctx.wrap_socket(sock, server_hostname='$name_new')
-    tls.settimeout(1.5)
-    tls.sendall(b'n')
-    sys.exit(0 if tls.recv(1) else 1)
-except OSError:
-    sys.exit(1)
-"; then
-  emit 'FAIL: new protected echo succeeded after revoke'
-  exit 1
-fi
-e nft list chain inet guest_revocation ingress > "$out/receipts/revocation-ingress.txt"
-e nft list chain inet guest_revocation replies > "$out/receipts/revocation-replies.txt"
-grep -F "$leased" "$out/receipts/revocation-ingress.txt"
-grep -F "$leased" "$out/receipts/revocation-replies.txt"
-grep -E 'drop' "$out/receipts/revocation-ingress.txt"
-grep -E 'drop' "$out/receipts/revocation-replies.txt"
+tls_fail post-revoke-new "$name_new" || fail "TLS succeeded for revoked guest after recovery"
+observe_new_echo_denied
 mgmt_ok after-recovery
 guest_mgmt_deny after-recovery
 unaffected_tls after-recovery "$(unique_name una-rec)"
-receipt post-recovery-revoked PASS "new_tls_denied=true" "new_echo_denied=true" "both_direction_drops=present" "unaffected=ok" "mgmt=ok"
+receipt post-recovery-revoked PASS \
+  "client_recv_forbidden=true" "server_recv_forbidden=true" \
+  "held_push_no_client_recv=true" "e2e_tls_continuity=not_claimed" \
+  "nat_mapping_lost=$nat_mapping_lost" \
+  "ingress_drops=$ingress_before>$ingress_after" \
+  "fixture_reverse_drops=$replies_before>$replies_after" \
+  "new_tls_denied=true" "new_echo_denied=true" "unaffected=ok" "mgmt=ok"
 
 # Exact rollback cannot bypass durable withdrawal
 cmp "$out/open.nft" "$out/exact-rollback.nft"
