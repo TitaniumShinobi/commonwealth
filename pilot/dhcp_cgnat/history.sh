@@ -871,7 +871,22 @@ python3 "$src/diagnostics.py" verify --namespace "$isp" --state "$out/diagnostic
   | tee "$out/receipts/diagnostics-verify.json"
 grep -F 'child_stopped_confirmed' "$out/receipts/diagnostics-stop.json"
 grep -F 'child_stopped_confirmed": true' "$out/receipts/diagnostics-verify.json"
-receipt diagnostics PASS "child_stopped_confirmed=true"
+python3 - "$out/receipts/diagnostics-verify.json" <<'PY'
+import json, sys
+row = json.load(open(sys.argv[1]))
+if int(row.get("capture_packets") or 0) < 1:
+    raise SystemExit(f"diagnostics verify missing captured packets: {row}")
+if int(row.get("capture_bytes") or 0) <= 24:
+    raise SystemExit(f"diagnostics verify capture_bytes not above pcap header: {row}")
+if not row.get("capture_parseable"):
+    raise SystemExit(f"diagnostics verify capture not parseable: {row}")
+print(json.dumps({"diagnostics_capture_ok": row}))
+PY
+receipt diagnostics PASS \
+  "child_stopped_confirmed=true" \
+  "capture_packets=$(python3 -c "import json;print(json.load(open('$out/receipts/diagnostics-verify.json'))['capture_packets'])")" \
+  "capture_bytes=$(python3 -c "import json;print(json.load(open('$out/receipts/diagnostics-verify.json'))['capture_bytes'])")" \
+  "no_portal_ui_claim=true"
 
 python3 "$act/field_check.py" "$act/../field-receipt.json" > "$out/field-assessment.json"
 python3 - "$out/field-assessment.json" <<'PY'

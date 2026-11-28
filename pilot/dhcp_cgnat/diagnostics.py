@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import signal
+import struct
 import subprocess
 import time
 from pathlib import Path
@@ -71,6 +72,32 @@ def wait_gone(pids: list[int], seconds: float = 2.0) -> bool:
     return not any(alive(pid) for pid in pids)
 
 
+def pcap_packet_count(path: Path) -> int:
+    """Return number of packets in a classic/nano libpcap file, or raise on unparseable."""
+    raw = path.read_bytes()
+    if len(raw) < 24:
+        raise ValueError(f"pcap too short for global header: {len(raw)} bytes")
+    magic = struct.unpack("<I", raw[0:4])[0]
+    if magic in (0xA1B2C3D4, 0xA1B23C4D):
+        endian = "<"
+    elif magic in (0xD4C3B2A1, 0x4D3CB2A1):
+        endian = ">"
+    else:
+        raise ValueError(f"unparseable pcap magic={magic:#010x}")
+    offset = 24
+    count = 0
+    while offset + 16 <= len(raw):
+        incl_len = struct.unpack(endian + "IIII", raw[offset : offset + 16])[2]
+        offset += 16
+        if incl_len < 0 or offset + incl_len > len(raw):
+            raise ValueError(f"truncated pcap record at packet {count}")
+        offset += incl_len
+        count += 1
+    if offset != len(raw):
+        raise ValueError(f"pcap trailing bytes after {count} packets")
+    return count
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("start", "stop", "verify"))
@@ -88,6 +115,8 @@ def main() -> None:
 
     if args.command == "start":
         before.write_text(nft_snapshot(args.namespace))
+        # Precreate capture so root tcpdump inside the netns can write packet-buffered output.
+        subprocess.run(["sudo", "-n", "install", "-m", "666", "/dev/null", str(capture)], check=True)
         proc = subprocess.Popen(
             [
                 "sudo",
@@ -98,6 +127,7 @@ def main() -> None:
                 args.namespace,
                 "tcpdump",
                 "-n",
+                "-U",  # packet-buffered: flush each packet so stop/flush keeps evidence
                 "-i",
                 args.interface,
                 "-c",
@@ -106,7 +136,7 @@ def main() -> None:
                 str(capture),
             ],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
         # Wait briefly for tcpdump to appear inside the fixture namespace.
         child_pids: list[int] = []
@@ -114,13 +144,19 @@ def main() -> None:
             child_pids = namespace_tcpdump_pids(args.namespace)
             if child_pids:
                 break
+            if proc.poll() is not None:
+                err = (proc.stderr.read() or b"").decode("utf-8", "replace")
+                raise SystemExit(f"tcpdump exited early status={proc.returncode}: {err}")
             time.sleep(0.05)
         if not child_pids:
             try:
                 proc.terminate()
             except OSError:
                 pass
-            raise SystemExit("tcpdump did not start inside fixture namespace")
+            err = (proc.stderr.read() or b"").decode("utf-8", "replace") if proc.stderr else ""
+            raise SystemExit(f"tcpdump did not start inside fixture namespace: {err}")
+        # Brief settle so the first ring is armed before fixture traffic.
+        time.sleep(0.15)
         pid_path.write_text(str(proc.pid))
         meta.write_text(
             json.dumps(
@@ -130,6 +166,7 @@ def main() -> None:
                     "tcpdump_pids": child_pids,
                     "mode": "read_only",
                     "child": "tcpdump",
+                    "packet_buffered": True,
                 }
             )
         )
@@ -139,6 +176,7 @@ def main() -> None:
                     "diagnostics": "started",
                     "wrapper_pid": proc.pid,
                     "tcpdump_pids": child_pids,
+                    "packet_buffered": True,
                 }
             )
         )
@@ -152,21 +190,39 @@ def main() -> None:
         child_pids = list(record.get("tcpdump_pids") or [])
         # Re-scan namespace so we catch children even if start meta is stale.
         child_pids = sorted(set(child_pids) | set(namespace_tcpdump_pids(args.namespace)))
-        targets = list(child_pids)
-        if wrapper_pid is not None:
-            targets.append(wrapper_pid)
-        for pid in targets:
+        # Child-first graceful stop so -U buffers flush into the pcap before the wrapper dies.
+        for pid in child_pids:
             if alive(pid):
                 signal_pid(pid, signal.SIGTERM)
-        if not wait_gone(targets, 2.0):
-            for pid in targets:
+        if not wait_gone(child_pids, 2.0):
+            for pid in child_pids:
                 if alive(pid):
                     signal_pid(pid, signal.SIGKILL)
-            wait_gone(targets, 1.0)
-        # Claim requires the actual tcpdump process tree inside the fixture ns to be gone.
+            wait_gone(child_pids, 1.0)
+        if wrapper_pid is not None and alive(wrapper_pid):
+            signal_pid(wrapper_pid, signal.SIGTERM)
+            if not wait_gone([wrapper_pid], 1.0):
+                signal_pid(wrapper_pid, signal.SIGKILL)
+                wait_gone([wrapper_pid], 0.5)
+        # Force directory sync so verify sees flushed bytes.
+        try:
+            dir_fd = os.open(str(state), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
         remaining = namespace_tcpdump_pids(args.namespace)
         wrapper_alive = bool(wrapper_pid is not None and alive(wrapper_pid))
         child_stopped_confirmed = not remaining and not wrapper_alive
+        capture_bytes = capture.stat().st_size if capture.exists() else 0
+        try:
+            packets = pcap_packet_count(capture) if capture.exists() else 0
+            pcap_error = None
+        except ValueError as exc:
+            packets = 0
+            pcap_error = str(exc)
         pid_path.unlink(missing_ok=True)
         after.write_text(nft_snapshot(args.namespace))
         meta.write_text(
@@ -178,6 +234,9 @@ def main() -> None:
                     "tcpdump_pids": child_pids,
                     "remaining_tcpdump_pids": remaining,
                     "child_stopped_confirmed": child_stopped_confirmed,
+                    "capture_bytes": capture_bytes,
+                    "capture_packets": packets,
+                    "pcap_error": pcap_error,
                 }
             )
         )
@@ -191,6 +250,8 @@ def main() -> None:
                     "diagnostics": "stopped",
                     "child_stopped_confirmed": True,
                     "namespace_tcpdump_gone": True,
+                    "capture_bytes": capture_bytes,
+                    "capture_packets": packets,
                 }
             )
         )
@@ -205,13 +266,37 @@ def main() -> None:
         raise SystemExit("diagnostics child stop not confirmed")
     if record.get("remaining_tcpdump_pids"):
         raise SystemExit("diagnostics tcpdump still recorded in namespace")
+    if not capture.exists():
+        raise SystemExit("diagnostics capture.pcap missing")
+    try:
+        packets = pcap_packet_count(capture)
+    except ValueError as exc:
+        raise SystemExit(f"diagnostics capture unparseable: {exc}") from exc
+    capture_bytes = capture.stat().st_size
+    if packets < 1:
+        raise SystemExit(
+            f"diagnostics capture has no packets (bytes={capture_bytes}); fixture traffic not evidenced"
+        )
+    # Cross-check with tcpdump reader when available (still fixture-local, no portal/UI).
+    try:
+        listed = subprocess.check_output(
+            ["tcpdump", "-nn", "-r", str(capture)], stderr=subprocess.DEVNULL, text=True
+        )
+        if not any(line.strip() for line in listed.splitlines()):
+            raise SystemExit("tcpdump -r produced no packet lines")
+    except FileNotFoundError:
+        pass
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(f"tcpdump -r failed status={exc.returncode}") from exc
     print(
         json.dumps(
             {
                 "diagnostics": "verified_unchanged_forwarding",
                 "child_stopped_confirmed": True,
                 "namespace_tcpdump_gone": True,
-                "capture_bytes": capture.stat().st_size if capture.exists() else 0,
+                "capture_bytes": capture_bytes,
+                "capture_packets": packets,
+                "capture_parseable": True,
             }
         )
     )
