@@ -54,8 +54,9 @@ try {
     return result.result?.result?.value;
   }
   async function click(selector) {
+    // One real mouse press/release only. Require a painted, enabled hit-target (non-zero box).
     const pos = await until(() => value("(()=>{const e=document.querySelector(" + JSON.stringify(selector) +
-      ");if(!e)return null;const r=e.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()"), selector);
+      ");if(!e||e.disabled)return null;const s=getComputedStyle(e);if(s.visibility==='hidden'||s.display==='none'||s.pointerEvents==='none')return null;const r=e.getBoundingClientRect();if(r.width<=0||r.height<=0)return null;return [r.x+r.width/2,r.y+r.height/2]})()"), selector);
     for (const type of ["mousePressed", "mouseReleased"])
       await send("Input.dispatchMouseEvent", {type, x: pos[0], y: pos[1], button: "left", clickCount: 1});
   }
@@ -88,8 +89,21 @@ try {
     const url = destination + "/quantum?trial=" + trial;
     await send("Page.navigate", {url});
     const response = await until(() => responses.find(r => r.url === url && r.status === 200), trial + " network response");
-    await until(() => value("location.href === " + JSON.stringify(url) + " && document.querySelector('#result')?.textContent === ''"),
-                trial + " page readiness");
+    // Document complete + empty result + visible/enabled #run with handler attached (app.js),
+    // before exactly one real click. No blind re-click / API / programmatic handler bypass.
+    await until(() => value("(()=>{" +
+      "if(location.href!==" + JSON.stringify(url) + ")return false;" +
+      "if(document.readyState!=='complete')return false;" +
+      "const out=document.querySelector('#result');" +
+      "if(!out||out.textContent!=='')return false;" +
+      "const run=document.querySelector('#run');" +
+      "if(!run||run.disabled)return false;" +
+      "if(typeof run.onclick!=='function')return false;" +
+      "const s=getComputedStyle(run);" +
+      "if(s.visibility==='hidden'||s.display==='none'||s.pointerEvents==='none')return false;" +
+      "const r=run.getBoundingClientRect();" +
+      "return r.width>0&&r.height>0;" +
+      "})()"), trial + " page readiness");
     const title = await value("document.querySelector('h1').textContent");
     await click("#run");
     const observed = await until(() => value("document.querySelector('#result')?.textContent"), trial + " button result");
