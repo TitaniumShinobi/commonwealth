@@ -174,6 +174,7 @@ table inet guest_edge {{
         type filter hook input priority filter; policy drop;
         iifname "lo" accept
         iifname "{outside}" ct state established,related accept
+        iifname "{outside}" udp sport 67 udp dport 68 counter accept
         iifname "{inside}" udp sport 68 udp dport 67 counter accept
         iifname "{inside}" ether saddr {mac} ip saddr {guest} udp dport 53 counter accept
         iifname "{inside}" ether saddr {mac} ip saddr {guest} tcp dport 53 counter accept

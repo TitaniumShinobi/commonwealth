@@ -7,12 +7,14 @@ on:
       - step-11-simulated-quantum
       - step-7-activation-readiness
       - wifi-withdrawal-review
+      - hydro/dhcp-cgnat-review
     paths:
       - .github/workflows/cloud-simulation.yml
       - kit/package/STEP9.md
       - simulation/step11/**
       - pilot/activation/**
       - pilot/wifi/**
+      - pilot/dhcp_cgnat/**
 permissions:
   contents: read
   actions: read
@@ -559,7 +561,7 @@ jobs:
           PY
 
   step-11:
-    if: github.ref_name == 'step-11-simulated-quantum' || github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review'
+    if: github.ref_name == 'step-11-simulated-quantum' || github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review' || github.ref_name == 'hydro/dhcp-cgnat-review'
     needs: step-8-consumer
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -648,7 +650,7 @@ jobs:
           PY
 
   activation-readiness:
-    if: github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review'
+    if: github.ref_name == 'step-7-activation-readiness' || github.ref_name == 'wifi-withdrawal-review' || github.ref_name == 'hydro/dhcp-cgnat-review'
     needs: step-11
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -718,7 +720,7 @@ jobs:
           PY
 
   wifi-withdrawal:
-    if: github.ref_name == 'wifi-withdrawal-review'
+    if: github.ref_name == 'wifi-withdrawal-review' || github.ref_name == 'hydro/dhcp-cgnat-review'
     needs: activation-readiness
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -779,4 +781,86 @@ jobs:
                   raise SystemExit("receipt custody mismatch")
           print(json.dumps({"wifi_custody": "verified", "artifact": os.environ["ARCHIVE_ID"],
                             "member_sha256": hashlib.sha256(raw).hexdigest()}))
+          PY
+
+  dhcp-cgnat:
+    if: github.ref_name == 'hydro/dhcp-cgnat-review'
+    needs:
+      - activation-readiness
+      - wifi-withdrawal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Stage WAN DHCP and carrier tooling
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sudo -n apt-get update -qq
+          sudo -n apt-get install -y -qq dnsmasq-base udhcpc conntrack nftables tcpdump
+      - name: Exercise WAN DHCP, carrier NAT, histories, and durable withdrawal
+        env:
+          HISTORY_TIMEOUT: "180"
+        run: |
+          bash -n pilot/dhcp_cgnat/prove.sh
+          bash -n pilot/dhcp_cgnat/history.sh
+          bash -n pilot/dhcp_cgnat/wan_lease.sh
+          # PID/namespace-scoped cleanup only inside history.sh — no broad pkill.
+          bash pilot/dhcp_cgnat/prove.sh "$RUNNER_TEMP/dhcp-cgnat"
+      - name: Expose bounded DHCP/CGNAT receipts
+        if: always()
+        run: |
+          root="$RUNNER_TEMP/dhcp-cgnat"
+          for item in trace.txt summary.json \
+            history-a/trace.txt history-b/trace.txt \
+            history-a/stages/history-complete.json history-b/stages/history-complete.json \
+            history-a/stages/history-outcome.json history-b/stages/history-outcome.json \
+            history-a/receipts/diagnostics-verify.json history-b/receipts/diagnostics-verify.json \
+            history-a/field-assessment.json history-b/field-assessment.json; do
+            if [[ -f "$root/$item" ]]; then
+              printf '\n--- %s ---\n' "$item"
+              head -c 6000 "$root/$item"
+            fi
+          done
+      - name: Preserve DHCP/CGNAT evidence
+        id: dhcp_artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: commonwealth-dhcp-cgnat
+          path: ${{ runner.temp }}/dhcp-cgnat
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify downloaded DHCP/CGNAT evidence
+        if: always() && steps.dhcp_artifact.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_ID: ${{ steps.dhcp_artifact.outputs.artifact-id }}
+          ARCHIVE_SHA: ${{ steps.dhcp_artifact.outputs.artifact-digest }}
+        run: |
+          root="$RUNNER_TEMP/dhcp-cgnat"
+          for attempt in {1..6}; do
+            if curl --fail --silent --show-error --location --max-time 10 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARCHIVE_ID/zip" \
+              -o "$RUNNER_TEMP/dhcp-cgnat.zip"; then break; fi
+            if [[ "$attempt" == 6 ]]; then exit 2; fi
+            sleep 2
+          done
+          echo "${ARCHIVE_SHA#sha256:}  $RUNNER_TEMP/dhcp-cgnat.zip" | sha256sum --check
+          python3 - "$root" "$RUNNER_TEMP/dhcp-cgnat.zip" <<'PY'
+          import hashlib, json, os, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          hashes = {}
+          with zipfile.ZipFile(sys.argv[2]) as bundle:
+              for name in bundle.namelist():
+                  raw = bundle.read(name)
+                  if raw != (root / name).read_bytes():
+                      raise SystemExit(f"custody mismatch: {name}")
+                  hashes[name] = hashlib.sha256(raw).hexdigest()
+          print(json.dumps({"artifact": os.environ["ARCHIVE_ID"], "custody": "verified",
+                            "member_sha256": hashes}))
           PY
