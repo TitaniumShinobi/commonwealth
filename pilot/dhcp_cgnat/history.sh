@@ -73,9 +73,18 @@ remove_reverse_probe_route() {
   fi
 }
 
+remove_flow_fifos() {
+  # Closed FIFOs are not regular receipts; drop them so artifact zip avoids ENTRYNOTSUPPORTED.
+  exec 9>&- 2>/dev/null || true
+  if [[ -e "$out/receipts/flow.cmd" || -p "$out/receipts/flow.cmd" ]]; then
+    rm -f -- "$out/receipts/flow.cmd" 2>/dev/null || true
+  fi
+}
+
 cleanup() {
   # Scoped cleanup only: recorded PIDs and this history's namespaces. Never pkill -f by name.
   remove_reverse_probe_route
+  remove_flow_fifos
   local pid
   for pid in "${flow_pid:-}" "${origin_pid:-}" "${guest_dns_pid:-}" "${isp_dhcp_pid:-}" "${mgmt_pid:-}"; do
     if [[ -n "$pid" ]]; then sudo -n kill "$pid" 2>/dev/null || true; fi
@@ -93,7 +102,6 @@ cleanup() {
   if [[ -n "${edge:-}" ]]; then sudo -n rm -rf "/etc/netns/$edge"; fi
   if [[ -n "${unaffected:-}" ]]; then sudo -n rm -rf "/etc/netns/$unaffected"; fi
   rm -rf -- "${operator:-}" "${keys:-}"
-  exec 9>&- 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -861,10 +869,15 @@ receipt exact-rollback-revoked PASS "tls_denied=true" "unaffected=ok"
 ########################################
 # Optional diagnostics + field hold
 ########################################
-python3 "$src/diagnostics.py" start --namespace "$isp" --state "$out/diagnostics" --interface edge0
+python3 "$src/diagnostics.py" start --namespace "$isp" --state "$out/diagnostics" --interface edge0 \
+  | tee "$out/receipts/diagnostics-start.json"
 name_diag=$(unique_name diag)
 # Unaffected traffic during diagnostics (revoked guest stays denied)
 unaffected_tls diag "$name_diag"
+# Bounded observed-packet barrier AFTER traffic, BEFORE stop (not a fixed sleep).
+python3 "$src/diagnostics.py" wait-packets --namespace "$isp" --state "$out/diagnostics" \
+  --interface edge0 --min-packets 1 --timeout 5 \
+  | tee "$out/receipts/diagnostics-barrier.json"
 python3 "$src/diagnostics.py" stop --namespace "$isp" --state "$out/diagnostics" --interface edge0 \
   | tee "$out/receipts/diagnostics-stop.json"
 python3 "$src/diagnostics.py" verify --namespace "$isp" --state "$out/diagnostics" --interface edge0 \
@@ -902,4 +915,4 @@ config_digest=$(sha256sum "$out/config-digests.txt" | awk '{print $1}')
 receipt history-complete PASS "config_digest=$config_digest" "field_acceptance=UNVERIFIED" "activation=HELD"
 emit "PASS[$mode]: independent history complete sha=${GITHUB_SHA:-local}"
 printf 'quit\n' >&9 || true
-exec 9>&- || true
+remove_flow_fifos

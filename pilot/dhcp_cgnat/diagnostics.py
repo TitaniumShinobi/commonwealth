@@ -52,7 +52,6 @@ def namespace_tcpdump_pids(namespace: str) -> list[int]:
 
 def signal_pid(pid: int, sig: int) -> None:
     try:
-        # Prefer killing via sudo so root-owned tcpdump children receive the signal.
         subprocess.run(["sudo", "-n", "kill", f"-{sig}", str(pid)], check=False)
     except OSError:
         try:
@@ -98,12 +97,55 @@ def pcap_packet_count(path: Path) -> int:
     return count
 
 
+def tcpdump_supports_immediate() -> bool:
+    try:
+        help_text = subprocess.check_output(["tcpdump", "--help"], stderr=subprocess.STDOUT, text=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        help_text = getattr(exc, "output", "") or ""
+    return "--immediate-mode" in help_text
+
+
+def wait_observed_packets(capture: Path, minimum: int, timeout: float) -> dict:
+    """Bounded barrier: poll parseable pcap until count >= minimum (not a fixed sleep)."""
+    deadline = time.monotonic() + timeout
+    last_error = None
+    packets = 0
+    while time.monotonic() < deadline:
+        if capture.exists():
+            try:
+                packets = pcap_packet_count(capture)
+                last_error = None
+                if packets >= minimum:
+                    return {
+                        "observed": True,
+                        "capture_packets": packets,
+                        "capture_bytes": capture.stat().st_size,
+                    }
+            except ValueError as exc:
+                last_error = str(exc)
+        time.sleep(0.05)
+    detail = {
+        "observed": False,
+        "capture_packets": packets,
+        "capture_bytes": capture.stat().st_size if capture.exists() else 0,
+        "pcap_error": last_error,
+        "timeout_s": timeout,
+        "minimum": minimum,
+    }
+    raise SystemExit(f"diagnostics packet barrier unmet: {json.dumps(detail)}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("start", "stop", "verify"))
+    parser.add_argument(
+        "command",
+        choices=("start", "wait-packets", "stop", "verify"),
+    )
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--state", required=True)
     parser.add_argument("--interface", default="edge0")
+    parser.add_argument("--min-packets", type=int, default=1)
+    parser.add_argument("--timeout", type=float, default=5.0)
     args = parser.parse_args()
     state = Path(args.state)
     state.mkdir(parents=True, exist_ok=True)
@@ -115,30 +157,23 @@ def main() -> None:
 
     if args.command == "start":
         before.write_text(nft_snapshot(args.namespace))
-        # Precreate capture so root tcpdump inside the netns can write packet-buffered output.
         subprocess.run(["sudo", "-n", "install", "-m", "666", "/dev/null", str(capture)], check=True)
-        proc = subprocess.Popen(
-            [
-                "sudo",
-                "-n",
-                "ip",
-                "netns",
-                "exec",
-                args.namespace,
-                "tcpdump",
-                "-n",
-                "-U",  # packet-buffered: flush each packet so stop/flush keeps evidence
-                "-i",
-                args.interface,
-                "-c",
-                "64",
-                "-w",
-                str(capture),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-        # Wait briefly for tcpdump to appear inside the fixture namespace.
+        immediate = tcpdump_supports_immediate()
+        cmd = [
+            "sudo",
+            "-n",
+            "ip",
+            "netns",
+            "exec",
+            args.namespace,
+            "tcpdump",
+            "-n",
+            "-U",  # packet-buffered userspace flush
+        ]
+        if immediate:
+            cmd.append("--immediate-mode")  # avoid TPACKET_V3 block-timeout delivery race
+        cmd.extend(["-i", args.interface, "-c", "64", "-w", str(capture)])
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         child_pids: list[int] = []
         for _ in range(40):
             child_pids = namespace_tcpdump_pids(args.namespace)
@@ -155,8 +190,7 @@ def main() -> None:
                 pass
             err = (proc.stderr.read() or b"").decode("utf-8", "replace") if proc.stderr else ""
             raise SystemExit(f"tcpdump did not start inside fixture namespace: {err}")
-        # Brief settle so the first ring is armed before fixture traffic.
-        time.sleep(0.15)
+        # Readiness = child present in ns; packet evidence is gated by wait-packets after traffic.
         pid_path.write_text(str(proc.pid))
         meta.write_text(
             json.dumps(
@@ -167,6 +201,7 @@ def main() -> None:
                     "mode": "read_only",
                     "child": "tcpdump",
                     "packet_buffered": True,
+                    "immediate_mode": immediate,
                 }
             )
         )
@@ -177,9 +212,19 @@ def main() -> None:
                     "wrapper_pid": proc.pid,
                     "tcpdump_pids": child_pids,
                     "packet_buffered": True,
+                    "immediate_mode": immediate,
                 }
             )
         )
+        return
+
+    if args.command == "wait-packets":
+        # Observed-packet barrier after exercised fixture traffic; not a fixed sleep.
+        result = wait_observed_packets(capture, args.min_packets, args.timeout)
+        record = json.loads(meta.read_text()) if meta.exists() else {}
+        record["packet_barrier"] = result
+        meta.write_text(json.dumps(record))
+        print(json.dumps({"diagnostics": "packets_observed", **result}))
         return
 
     if args.command == "stop":
@@ -188,9 +233,8 @@ def main() -> None:
         if pid_path.exists():
             wrapper_pid = int(pid_path.read_text().strip())
         child_pids = list(record.get("tcpdump_pids") or [])
-        # Re-scan namespace so we catch children even if start meta is stale.
         child_pids = sorted(set(child_pids) | set(namespace_tcpdump_pids(args.namespace)))
-        # Child-first graceful stop so -U buffers flush into the pcap before the wrapper dies.
+        # Child-first graceful stop so -U / immediate buffers flush into the pcap.
         for pid in child_pids:
             if alive(pid):
                 signal_pid(pid, signal.SIGTERM)
@@ -204,7 +248,6 @@ def main() -> None:
             if not wait_gone([wrapper_pid], 1.0):
                 signal_pid(wrapper_pid, signal.SIGKILL)
                 wait_gone([wrapper_pid], 0.5)
-        # Force directory sync so verify sees flushed bytes.
         try:
             dir_fd = os.open(str(state), os.O_RDONLY)
             try:
@@ -237,6 +280,8 @@ def main() -> None:
                     "capture_bytes": capture_bytes,
                     "capture_packets": packets,
                     "pcap_error": pcap_error,
+                    "packet_barrier": record.get("packet_barrier"),
+                    "immediate_mode": record.get("immediate_mode"),
                 }
             )
         )
@@ -277,7 +322,6 @@ def main() -> None:
         raise SystemExit(
             f"diagnostics capture has no packets (bytes={capture_bytes}); fixture traffic not evidenced"
         )
-    # Cross-check with tcpdump reader when available (still fixture-local, no portal/UI).
     try:
         listed = subprocess.check_output(
             ["tcpdump", "-nn", "-r", str(capture)], stderr=subprocess.DEVNULL, text=True
@@ -297,6 +341,7 @@ def main() -> None:
                 "capture_bytes": capture_bytes,
                 "capture_packets": packets,
                 "capture_parseable": True,
+                "immediate_mode": record.get("immediate_mode"),
             }
         )
     )
