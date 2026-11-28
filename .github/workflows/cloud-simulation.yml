@@ -720,7 +720,7 @@ jobs:
           PY
 
   wifi-withdrawal:
-    if: github.ref_name == 'wifi-withdrawal-review'
+    if: github.ref_name == 'wifi-withdrawal-review' || github.ref_name == 'hydro/dhcp-cgnat-review'
     needs: activation-readiness
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -785,9 +785,11 @@ jobs:
 
   dhcp-cgnat:
     if: github.ref_name == 'hydro/dhcp-cgnat-review'
-    needs: activation-readiness
+    needs:
+      - activation-readiness
+      - wifi-withdrawal
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -799,20 +801,24 @@ jobs:
           sudo -n apt-get update -qq
           sudo -n apt-get install -y -qq dnsmasq-base udhcpc conntrack nftables tcpdump
       - name: Exercise WAN DHCP, carrier NAT, histories, and durable withdrawal
+        env:
+          HISTORY_TIMEOUT: "180"
         run: |
           bash -n pilot/dhcp_cgnat/prove.sh
+          bash -n pilot/dhcp_cgnat/history.sh
           bash -n pilot/dhcp_cgnat/wan_lease.sh
+          # PID/namespace-scoped cleanup only inside history.sh — no broad pkill.
           bash pilot/dhcp_cgnat/prove.sh "$RUNNER_TEMP/dhcp-cgnat"
       - name: Expose bounded DHCP/CGNAT receipts
         if: always()
         run: |
           root="$RUNNER_TEMP/dhcp-cgnat"
-          for item in trace.txt receipts/summary.json receipts/diagnostics-verify.json \
-            history-a/route-before.txt history-a/route-after.txt \
-            history-b/route-before.txt history-b/route-after.txt \
-            receipts/wan-lease-a1.ndjson receipts/wan-lease-a2.ndjson \
-            receipts/wan-lease-b1.ndjson receipts/wan-lease-b2.ndjson \
-            field-assessment.json; do
+          for item in trace.txt summary.json \
+            history-a/trace.txt history-b/trace.txt \
+            history-a/stages/history-complete.json history-b/stages/history-complete.json \
+            history-a/stages/history-incomplete.json history-b/stages/history-incomplete.json \
+            history-a/receipts/diagnostics-verify.json history-b/receipts/diagnostics-verify.json \
+            history-a/field-assessment.json history-b/field-assessment.json; do
             if [[ -f "$root/$item" ]]; then
               printf '\n--- %s ---\n' "$item"
               head -c 6000 "$root/$item"
