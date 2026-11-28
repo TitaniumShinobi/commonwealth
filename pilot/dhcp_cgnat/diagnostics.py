@@ -135,6 +135,47 @@ def wait_observed_packets(capture: Path, minimum: int, timeout: float) -> dict:
     raise SystemExit(f"diagnostics packet barrier unmet: {json.dumps(detail)}")
 
 
+STDERR_LOG_CAP = 64 * 1024  # bounded persistent evidence; truncate on start
+
+
+def stderr_evidence(path: Path, limit: int = 4096) -> dict:
+    """Retain bounded startup/exit stderr evidence without re-opening a PIPE."""
+    if not path.exists():
+        return {"stderr_log": str(path), "stderr_bytes": 0, "stderr_tail": ""}
+    size = path.stat().st_size
+    raw = path.read_bytes()
+    if len(raw) > limit:
+        raw = raw[-limit:]
+    return {
+        "stderr_log": str(path),
+        "stderr_bytes": size,
+        "stderr_tail": raw.decode("utf-8", "replace"),
+    }
+
+
+def wait_armed_capture(capture: Path, child_pids: list[int], timeout: float = 2.0) -> dict:
+    """Gate start on parseable pcap header (min 0 packets), not PID presence alone."""
+    deadline = time.monotonic() + timeout
+    last_error = "pcap missing"
+    while time.monotonic() < deadline:
+        if not any(alive(pid) for pid in child_pids):
+            raise SystemExit("tcpdump child died before capture armed")
+        if capture.exists():
+            try:
+                packets = pcap_packet_count(capture)  # valid header ⇒ armed (0 packets OK)
+                return {
+                    "armed": True,
+                    "capture_packets": packets,
+                    "capture_bytes": capture.stat().st_size,
+                }
+            except ValueError as exc:
+                last_error = str(exc)
+        time.sleep(0.05)
+    raise SystemExit(
+        f"diagnostics capture not armed: {json.dumps({'pcap_error': last_error, 'timeout_s': timeout})}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -158,39 +199,59 @@ def main() -> None:
     if args.command == "start":
         before.write_text(nft_snapshot(args.namespace))
         subprocess.run(["sudo", "-n", "install", "-m", "666", "/dev/null", str(capture)], check=True)
-        immediate = tcpdump_supports_immediate()
-        cmd = [
-            "sudo",
-            "-n",
-            "ip",
-            "netns",
-            "exec",
-            args.namespace,
-            "tcpdump",
-            "-n",
-            "-U",  # packet-buffered userspace flush
-        ]
-        if immediate:
-            cmd.append("--immediate-mode")  # avoid TPACKET_V3 block-timeout delivery race
-        cmd.extend(["-i", args.interface, "-c", "64", "-w", str(capture)])
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        stderr_log = state / "tcpdump.stderr.log"
+        # Persistent file (not PIPE): start CLI exits while tcpdump keeps writing startup/stats.
+        with open(stderr_log, "wb") as err_fh:
+            err_fh.truncate(0)
+            immediate = tcpdump_supports_immediate()
+            cmd = [
+                "sudo",
+                "-n",
+                "ip",
+                "netns",
+                "exec",
+                args.namespace,
+                "tcpdump",
+                "-n",
+                "-U",  # packet-buffered userspace flush
+            ]
+            if immediate:
+                cmd.append("--immediate-mode")  # avoid TPACKET_V3 block-timeout delivery race
+            cmd.extend(["-i", args.interface, "-c", "64", "-w", str(capture)])
+            # New session: detached from start CLI lifecycle; stderr stays on the log file.
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=err_fh,
+                start_new_session=True,
+            )
         child_pids: list[int] = []
         for _ in range(40):
             child_pids = namespace_tcpdump_pids(args.namespace)
             if child_pids:
                 break
             if proc.poll() is not None:
-                err = (proc.stderr.read() or b"").decode("utf-8", "replace")
-                raise SystemExit(f"tcpdump exited early status={proc.returncode}: {err}")
+                ev = stderr_evidence(stderr_log)
+                raise SystemExit(
+                    f"tcpdump exited early status={proc.returncode}: {json.dumps(ev)}"
+                )
             time.sleep(0.05)
         if not child_pids:
             try:
                 proc.terminate()
             except OSError:
                 pass
-            err = (proc.stderr.read() or b"").decode("utf-8", "replace") if proc.stderr else ""
-            raise SystemExit(f"tcpdump did not start inside fixture namespace: {err}")
-        # Readiness = child present in ns; packet evidence is gated by wait-packets after traffic.
+            ev = stderr_evidence(stderr_log)
+            raise SystemExit(f"tcpdump did not start inside fixture namespace: {json.dumps(ev)}")
+        # Armed = parseable pcap header on disk (packet count may still be 0).
+        armed = wait_armed_capture(capture, child_pids)
+        # Bound stderr evidence file size for custody retention.
+        if stderr_log.exists() and stderr_log.stat().st_size > STDERR_LOG_CAP:
+            raw = stderr_log.read_bytes()[-STDERR_LOG_CAP:]
+            stderr_log.write_bytes(raw)
+        ev = stderr_evidence(stderr_log)
+        if not any(alive(pid) for pid in child_pids):
+            raise SystemExit(f"tcpdump died after arming: {json.dumps(ev)}")
         pid_path.write_text(str(proc.pid))
         meta.write_text(
             json.dumps(
@@ -202,6 +263,11 @@ def main() -> None:
                     "child": "tcpdump",
                     "packet_buffered": True,
                     "immediate_mode": immediate,
+                    "capture_armed": True,
+                    "armed": armed,
+                    "stderr_log": ev["stderr_log"],
+                    "stderr_bytes": ev["stderr_bytes"],
+                    "stderr_tail": ev["stderr_tail"],
                 }
             )
         )
@@ -213,6 +279,9 @@ def main() -> None:
                     "tcpdump_pids": child_pids,
                     "packet_buffered": True,
                     "immediate_mode": immediate,
+                    "capture_armed": True,
+                    "capture_bytes": armed["capture_bytes"],
+                    "stderr_bytes": ev["stderr_bytes"],
                 }
             )
         )
@@ -266,6 +335,10 @@ def main() -> None:
         except ValueError as exc:
             packets = 0
             pcap_error = str(exc)
+        stderr_log = state / "tcpdump.stderr.log"
+        if stderr_log.exists() and stderr_log.stat().st_size > STDERR_LOG_CAP:
+            stderr_log.write_bytes(stderr_log.read_bytes()[-STDERR_LOG_CAP:])
+        ev = stderr_evidence(stderr_log)
         pid_path.unlink(missing_ok=True)
         after.write_text(nft_snapshot(args.namespace))
         meta.write_text(
@@ -282,6 +355,10 @@ def main() -> None:
                     "pcap_error": pcap_error,
                     "packet_barrier": record.get("packet_barrier"),
                     "immediate_mode": record.get("immediate_mode"),
+                    "capture_armed": record.get("capture_armed"),
+                    "stderr_log": ev["stderr_log"],
+                    "stderr_bytes": ev["stderr_bytes"],
+                    "stderr_tail": ev["stderr_tail"],
                 }
             )
         )
